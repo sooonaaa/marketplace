@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import axios from 'axios';
 // Импортируем страницу продукта
 import ProductPage from './ProductPage'; 
 import ProfilePage from './ProfilePage';
@@ -47,193 +48,7 @@ const CATEGORIES: Category[] = [
   { id: 'home', name: 'Товары для дома', icon: '🏡' },
 ];
 
-const INITIAL_PRODUCTS: Product[] = [
-  {
-    id: 1,
-    title: 'Натуральный липовый мед "Волжские просторы", 500г',
-    price: 450,
-    oldPrice: 600,
-    category: 'food',
-    rating: 4.9,
-    reviewsCount: 24,
-    manufacturer: 'Пасека Ивановых',
-    city: 'г. Чебоксары',
-    imageUrl: 'https://img.freepik.com/premium-photo/sweet-bee-honey_200402-11403.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 4,
-    title: 'Иван-чай ферментированный с чабрецом и мятой',
-    price: 280,
-    category: 'food',
-    rating: 4.6,
-    reviewsCount: 41,
-    manufacturer: 'Родные Травы',
-    city: 'г. Ядрин',
-    imageUrl: 'https://images.unsplash.com/photo-1594631252845-29fc4cc8cde9?w=500&auto=format&fit=crop&q=80', 
-    isLocalVerified: false
-  },
-  {
-    id: 7,
-    title: 'Варенье из сосновых шишек, 250г',
-    price: 350,
-    category: 'food',
-    rating: 4.8,
-    reviewsCount: 32,
-    manufacturer: 'Лесные Дары',
-    city: 'г. Шумерля',
-    imageUrl: 'https://img.povar.ru/uploads/c4/57/69/89/varene_iz_sosnovih_shishek_s_myatoi-777927.JPG', 
-    isLocalVerified: true
-  },
-  {
-    id: 8,
-    title: 'Хрустящие ржаные хлебцы на закваске',
-    price: 120,
-    category: 'food',
-    rating: 4.5,
-    reviewsCount: 19,
-    manufacturer: 'Чебоксарский Хлебопек',
-    city: 'г. Чебоксары',
-    imageUrl: 'https://storage.delikateska.ru/cache/c/5/4cc66e68-2594-41ad-95c4-2ce7a320e6d2.jpg/w400h400qq.webp', 
-    isLocalVerified: false
-  },
-  {
-    id: 2,
-    title: 'Льняной костюм Оверсайз (натуральный лен)',
-    price: 3200,
-    category: 'clothes',
-    rating: 4.7,
-    reviewsCount: 12,
-    manufacturer: 'Текстиль-Мануфактура',
-    city: 'г. Новочебоксарск',
-    imageUrl: 'https://basket-11.wbbasket.ru/vol1641/part164160/164160616/images/big/1.webp', 
-    isLocalVerified: true
-  },
-  {
-    id: 9,
-    title: 'Вязаный кардиган из овечьей шерсти ручной работы',
-    price: 4500,
-    oldPrice: 5200,
-    category: 'clothes',
-    rating: 5.0,
-    reviewsCount: 7,
-    manufacturer: 'Узоры Поволжья',
-    city: 'г. Козловка',
-    imageUrl: 'https://cs1.livemaster.ru/storage/ef/fb/7f21e0eb26be3446450bdbcee0c5--odezhda-kardigan-ruchnoj-raboty.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 10,
-    title: 'Полотенце с вышивкой',
-    price: 1100,
-    category: 'home',
-    rating: 4.4,
-    reviewsCount: 28,
-    manufacturer: 'Стиль Натива',
-    city: 'г. Чебоксары',
-    imageUrl: 'https://static.insales-cdn.com/images/products/1/1025/906093569/2.jpg', 
-    isLocalVerified: false
-  },
-  {
-    id: 11,
-    title: 'Платок шерстяной',
-    price: 1800,
-    category: 'clothes',
-    rating: 4.9,
-    reviewsCount: 14,
-    manufacturer: 'Бабушкина пряжа',
-    city: 'г. Чебоксары',
-    imageUrl: 'https://royal-wool.ru/wp-content/uploads/2020/03/palantin-kashemir-15452-rw-4.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 12,
-    title: 'Носки из натуральной шерсти, теплые',
-    price: 350,
-    oldPrice: 450,
-    category: 'clothes',
-    rating: 4.7,
-    reviewsCount: 56,
-    manufacturer: 'Бабушкина Пряжа',
-    city: 'с. Батырево',
-    imageUrl: 'https://cs5.livemaster.ru/storage/fe/a1/a3c013443fdd1dcc0a78696674cd--aksessuary-38-39-noski-iz-sobachej-shersti-puha.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 3,
-    title: 'Керамический кувшин ручной работы "Традиция"',
-    price: 850,
-    oldPrice: 1100,
-    category: 'crafts',
-    rating: 5.0,
-    reviewsCount: 8,
-    manufacturer: 'Гончарный мастер Егоров',
-    city: 'с. Аликово',
-    imageUrl: 'https://basket-13.wbbasket.ru/vol2012/part201229/201229211/images/big/1.webp', 
-    isLocalVerified: true
-  },
-  {
-    id: 13,
-    title: 'Резная деревянная шкатулка из липы',
-    price: 1600,
-    category: 'crafts',
-    rating: 4.8,
-    reviewsCount: 11,
-    manufacturer: 'Артель Лесное Дело',
-    city: 'г. Мариинский Посад',
-    imageUrl: 'https://cs1.livemaster.ru/storage/d5/a4/6fb596ab179e355566b688ef9bj7--dlya-doma-i-interera-shkatulka-reznaya.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 15,
-    title: 'Плед крупной вязки',
-    price: 2400,
-    category: 'home',
-    rating: 4.9,
-    reviewsCount: 5,
-    manufacturer: 'Золотые руки',
-    city: 'г. Новочебоксарск',
-    imageUrl: 'https://avatars.mds.yandex.net/get-mpic/12351018/2a000001904e75ba5c2ef1a2243cc90a8953/orig', 
-    isLocalVerified: true
-  },
-  {
-    id: 5,
-    title: 'Плетеный коврик из джута "Уют"',
-    price: 1500,
-    category: 'home',
-    rating: 4.8,
-    reviewsCount: 19,
-    manufacturer: 'Мастерская ЭкоДекор',
-    city: 'г. Мариинский Посад',
-    imageUrl: 'https://cs5.livemaster.ru/storage/9a/b4/a6ef81b34ad550b1ff9e4f4b6a6z--dlya-doma-i-interera-kruglyj-kover-iz-dzhuta.jpg', 
-    isLocalVerified: true
-  },
-  {
-    id: 17,
-    title: 'Натуральная свеча из соевого воска "Хвойный лес"',
-    price: 450,
-    category: 'home',
-    rating: 4.9,
-    reviewsCount: 37,
-    manufacturer: 'Свечной Дом Крафта',
-    city: 'г. Чебоксары',
-    imageUrl: 'https://images.unsplash.com/photo-1603006905003-be475563bc59?w=500&auto=format&fit=crop&q=80', 
-    isLocalVerified: true
-  },
-  {
-    id: 18,
-    title: 'Разделочная доска из цельного дуба торцевая',
-    price: 2100,
-    oldPrice: 2600,
-    category: 'home',
-    rating: 5.0,
-    reviewsCount: 14,
-    manufacturer: 'Древо Мастер',
-    city: 'г. Шумерля',
-    imageUrl: 'https://ir.ozone.ru/multimedia/1022491194.jpg', 
-    isLocalVerified: true
-  }
-];
+
 
 export default function MainPage() {
   // Добавлено состояние навигации: 'main' или 'product'
@@ -241,6 +56,13 @@ export default function MainPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+
+useEffect(() => {
+  axios.get('http://localhost:8000/api/products/')
+    .then(res => setProducts(res.data))
+    .catch(err => console.error('Ошибка загрузки продуктов:', err));
+}, []);
 
   // Новое состояние для сортировки
   const [sortBy, setSortBy] = useState<string>('rating');
@@ -345,7 +167,7 @@ export default function MainPage() {
 
   // Фильтрация и сортировка продуктов
   const filteredProducts = useMemo(() => {
-    const result = INITIAL_PRODUCTS.filter(product => {
+    const result = products.filter(product => {
       const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
       const matchesSearch = product.title.toLowerCase().includes(activeSearchFilter.toLowerCase()) || 
                             product.manufacturer.toLowerCase().includes(activeSearchFilter.toLowerCase()) ||
@@ -366,7 +188,7 @@ export default function MainPage() {
     }
 
     return result;
-  }, [selectedCategory, activeSearchFilter, onlyLocal, sortBy]);
+  }, [selectedCategory, activeSearchFilter, onlyLocal, sortBy, products]);
 
   const currentCategoryName = useMemo(() => {
     const cat = CATEGORIES.find(c => c.id === selectedCategory);
