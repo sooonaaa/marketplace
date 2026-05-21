@@ -19,6 +19,8 @@ class Product(models.Model):
     city = models.CharField(max_length=100)
     image = models.ImageField(upload_to='products/', blank=True, null=True)
     is_local_verified = models.BooleanField(default=False)
+    description = models.TextField(blank=True, default='')
+    specs = models.JSONField(blank=True, default=list)
 
     def __str__(self):
         return self.title

@@ -53,16 +53,11 @@ const CATEGORIES: Category[] = [
 export default function MainPage() {
   // Добавлено состояние навигации: 'main' или 'product'
   const [activePage, setActivePage] = useState<'main' | 'product' | 'profile'>('main');
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-
-useEffect(() => {
-  axios.get('http://localhost:8000/api/products/')
-    .then(res => setProducts(res.data))
-    .catch(err => console.error('Ошибка загрузки продуктов:', err));
-}, []);
 
   // Новое состояние для сортировки
   const [sortBy, setSortBy] = useState<string>('rating');
@@ -72,6 +67,16 @@ useEffect(() => {
   const [activeSearchFilter, setActiveSearchFilter] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+  const params: Record<string, string> = {};
+  if (activeSearchFilter) params.search = activeSearchFilter;
+  if (selectedCategory && selectedCategory !== 'all') params.category = selectedCategory;
+  
+  axios.get('http://localhost:8000/api/products/', { params })
+    .then(res => setProducts(res.data))
+    .catch(err => console.error('Ошибка загрузки продуктов:', err));
+}, [activeSearchFilter, selectedCategory]);
 
   // Состояния авторизации
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -165,59 +170,64 @@ useEffect(() => {
     );
   }, [regName, regEmail, isEmailValid, regPhone, regPassword, regAgreement]);
 
-  // Фильтрация и сортировка продуктов
+
+// Сортировка продуктов
   const filteredProducts = useMemo(() => {
-    const result = products.filter(product => {
-      const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-      const matchesSearch = product.title.toLowerCase().includes(activeSearchFilter.toLowerCase()) || 
-                            product.manufacturer.toLowerCase().includes(activeSearchFilter.toLowerCase()) ||
-                            product.city.toLowerCase().includes(activeSearchFilter.toLowerCase());
-      const matchesLocal = !onlyLocal || product.is_local_verified;
-      return matchesCategory && matchesSearch && matchesLocal;
-    });
-
-    // Применяем сортировку, только если выбрана категория (не 'all')
+    const result = [...products];
     if (selectedCategory !== 'all') {
-      if (sortBy === 'cheap') {
-        result.sort((a, b) => a.price - b.price);
-      } else if (sortBy === 'expensive') {
-        result.sort((a, b) => b.price - a.price);
-      } else if (sortBy === 'rating') {
-        result.sort((a, b) => b.rating - a.rating);
-      }
+      if (sortBy === 'cheap') result.sort((a, b) => a.price - b.price);
+      else if (sortBy === 'expensive') result.sort((a, b) => b.price - a.price);
+      else if (sortBy === 'rating') result.sort((a, b) => b.rating - a.rating);
     }
-
     return result;
-  }, [selectedCategory, activeSearchFilter, onlyLocal, sortBy, products]);
+  }, [products, selectedCategory, sortBy]);
 
   const currentCategoryName = useMemo(() => {
     const cat = CATEGORIES.find(c => c.id === selectedCategory);
     return cat ? cat.name : 'Каталог';
   }, [selectedCategory]);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loginValue === '+77777777777' && passwordValue === 'admin') {
-      setIsLoggedIn(true);
-      setIsLoginModalOpen(false);
-      setLoginValue('');
-      setPasswordValue('');
-    } else {
-      alert('Неверно введен логин или пароль');
-    }
-  };
+ const handleLoginSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  try {
+    const res = await axios.post('http://localhost:8000/api/auth/login/', {
+      email: loginValue,
+      password: passwordValue,
+    });
+    localStorage.setItem('access_token', res.data.access);
+    localStorage.setItem('user_name', res.data.name);
+    setIsLoggedIn(true);
+    setIsLoginModalOpen(false);
+    setLoginValue('');
+    setPasswordValue('');
+  } catch {
+    alert('Неверный логин или пароль');
+  }
+};
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isFormValid) return;
-    alert(`Аккаунт создан!\nПользователь: ${regName}\nEmail: ${regEmail}\nТелефон: ${regPhone}`);
+const handleRegisterSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!isFormValid) return;
+  try {
+    await axios.post('http://localhost:8000/api/auth/register/', {
+      name: regName,
+      email: regEmail,
+      phone: regPhone,
+      password: regPassword,
+    });
+    alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
     setIsRegisterModalOpen(false);
     setRegName('');
     setRegEmail('');
     setRegPhone('');
     setRegPassword('');
     setRegAgreement(false);
-  };
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      alert(err.response?.data?.error || 'Ошибка регистрации');
+    }
+  }
+};
 
   // Метод выполнения поиска при клике на лупу или Enter
   const executeSearch = () => {
@@ -230,35 +240,31 @@ useEffect(() => {
     setActivePage('main');
   };
 
-  // Метод очистки строки поиска
-  const clearSearch = () => {
-    setSearchQuery('');
-    setActiveSearchFilter('');
-    setIsSearchFocused(false);
-  };
-
   // Добавлен метод клика по карточке товара
-  const handleProductClick = (productId: number) => {
-    if (productId === 1) {
-      setActivePage('product');
-    } else {
-      alert('Страница для данного товара еще не создана. Открытие доступно только для Липового мёда (ID: 1).');
-    }
-  };
+const handleProductClick = (productId: number) => {
+  setSelectedProductId(productId);
+  setActivePage('product');
+};
 
   const shouldShowSearchOverlay = isSearchFocused;
   const isAnyOverlayOpen = isCatalogOpen || isLoginModalOpen || isRegisterModalOpen || shouldShowSearchOverlay;
 
   // Если активна страница товара, рендерим ProductPage (управляя переключением обратно через логотип)
-  if (activePage === 'product') {
+if (activePage === 'product') {
     return (
       <ProductPage 
         isLoggedIn={isLoggedIn} 
         setIsLoggedIn={setIsLoggedIn} 
         onBackToMain={() => setActivePage('main')} 
+        productId={selectedProductId!}
+        onSearch={(query) => {
+          setSearchQuery(query);
+          setActiveSearchFilter(query);
+          setActivePage('main');
+        }}
         onCategorySelect={(categoryId) => {
-          setSelectedCategory(categoryId); // Устанавливаем выбранную категорию на главной
-          setActivePage('main');           // Переключаем страницу на главную
+          setSelectedCategory(categoryId);
+          setActivePage('main');
         }}
       />
     );
@@ -330,11 +336,11 @@ if (activePage === 'profile') {
           
           <form onSubmit={handleLoginSubmit} style={styles.modalForm}>
             <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Логин или Email</label>
+              <label style={styles.inputLabel}>Email</label>
               <input 
                 type="text" 
                 required
-                placeholder="Введите логин"
+                placeholder="Введите email"
                 value={loginValue}
                 onChange={(e) => setLoginValue(e.target.value)}
                 style={styles.modalInput}
@@ -799,7 +805,7 @@ if (activePage === 'profile') {
               </div>
             )}
             
-            {(selectedCategory !== 'all' || activeSearchFilter) && (
+            {selectedCategory !== 'all' && (
               <div style={styles.badgeWrapper}>
                 {selectedCategory !== 'all' && (
                   <span style={styles.activeCategoryBadge}>
@@ -807,17 +813,6 @@ if (activePage === 'profile') {
                     <button 
                       style={styles.resetCategoryButton}
                       onClick={() => setSelectedCategory('all')}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                )}
-                {activeSearchFilter && (
-                  <span style={{ ...styles.activeCategoryBadge, backgroundColor: '#E3ECE6' }}>
-                    Поиск: «{activeSearchFilter}»
-                    <button 
-                      style={styles.resetCategoryButton}
-                      onClick={clearSearch}
                     >
                       ✕
                     </button>

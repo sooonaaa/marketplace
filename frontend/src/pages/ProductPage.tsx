@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios';
 
 // --- ТИПЫ И ИНТЕРФЕЙСЫ ---
 interface Category {
@@ -10,8 +11,10 @@ interface ProductPageProps {
   isLoggedIn: boolean;
   setIsLoggedIn: (value: boolean) => void;
   onBackToMain: () => void;
-  onCategorySelect: (categoryId: string) => void; // Новый проп для передачи категории на главную
-}
+  onCategorySelect: (categoryId: string) => void;
+  productId: number;
+  onSearch: (query: string) => void;
+} 
 
 // --- ЦВЕТОВАЯ ПАЛИТРА ---
 const COLORS = {
@@ -37,35 +40,35 @@ const CATEGORIES: Category[] = [
 ];
 
 // Данные конкретного товара
-const PRODUCT_DATA = {
-  id: 1,
-  title: 'Натуральный липовый мед "Волжские просторы", 500г',
-  price: 450,
-  oldPrice: 600,
-  category: 'food',
-  rating: 4.9,
-  reviewsCount: 24,
-  manufacturer: 'Пасека Ивановых',
-  city: 'г. Чебоксары',
-  imageUrl: 'https://img.freepik.com/premium-photo/sweet-bee-honey_200402-11403.jpg', 
-  isLocalVerified: true,
-  description: 'Исключительно чистый липовый мед, собранный на семейной пасеке в экологически благоприятных районах Поволжья. Обладает нежным золотистым оттенком, изысканным ароматом цветущей липы и выраженными целебными свойствами. Идеально подходит для поддержания иммунитета в холодное время года, чаепития и создания полезных десертов.',
-  specs: [
-    { label: 'Вес нетто', value: '500 г' },
-    { label: 'Вид меда', value: 'Липовый' },
-    { label: 'Год сбора', value: '2025 г.' },
-    { label: 'Срок годности', value: '24 месяца' },
-    { label: 'Условия хранения', value: 'При температуре от +4°C до +20°C в сухом месте' },
-    { label: 'Упаковка', value: 'Стеклянная банка с бугельным замком' }
-  ]
-};
 
-export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, onCategorySelect }: ProductPageProps) {  const [searchQuery, setSearchQuery] = useState<string>('');
+
+export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, onCategorySelect, productId, onSearch }: ProductPageProps) {  const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearchFilter, setActiveSearchFilter] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [cartCount, setCartCount] = useState<number>(0);
+  const [productData, setProductData] = useState<{
+  id: number;
+  title: string;
+  price: number;
+  old_price?: number;
+  category: string;
+  rating: number;
+  reviews_count: number;
+  manufacturer: string;
+  city: string;
+  image?: string;
+  is_local_verified: boolean;
+  description?: string;
+  specs?: { label: string; value: string }[];
+} | null>(null);
+
+useEffect(() => {
+  axios.get(`http://localhost:8000/api/products/${productId}/`)
+    .then(res => setProductData(res.data))
+    .catch(err => console.error('Ошибка загрузки товара:', err));
+}, [productId]);
   const [selectedCategory, setSelectedCategory] = useState<string>('food'); // по умолчанию категория товара
 
   // Состояния для боковых панелей и модальных окон
@@ -99,43 +102,66 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regAgreement, setRegAgreement] = useState(false);
-
+  const isFormValid = 
+    regName.trim().length > 0 &&
+    regEmail.trim().length > 0 &&
+    regPhone.length === 18 &&
+    regPassword.trim().length > 0 &&
+    regAgreement;
   // Интерактив на странице товара
   const [isOrderBtnHovered, setIsOrderBtnHovered] = useState(false);
   const [activeTab, setActiveTab] = useState<'desc' | 'specs'>('desc');
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loginValue === '+77777777777' && passwordValue === 'admin') {
-      setIsLoggedIn(true);
-      setIsLoginModalOpen(false);
-      setLoginValue('');
-      setPasswordValue('');
-    } else {
-      alert('Неверно введен логин или пароль');
-    }
-  };
+const handleLoginSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  try {
+    const res = await axios.post('http://localhost:8000/api/auth/login/', {
+      email: loginValue,
+      password: passwordValue,
+    });
+    localStorage.setItem('access_token', res.data.access);
+    localStorage.setItem('user_name', res.data.name);
+    setIsLoggedIn(true);
+    setIsLoginModalOpen(false);
+    setLoginValue('');
+    setPasswordValue('');
+  } catch {
+    alert('Неверный логин или пароль');
+  }
+};
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert(`Аккаунт создан!\nПользователь: ${regName}\nEmail: ${regEmail}\nТелефон: ${regPhone}`);
+const handleRegisterSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!isFormValid) return;
+  try {
+    await axios.post('http://localhost:8000/api/auth/register/', {
+      name: regName,
+      email: regEmail,
+      phone: regPhone,
+      password: regPassword,
+    });
+    alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
     setIsRegisterModalOpen(false);
     setRegName('');
     setRegEmail('');
     setRegPhone('');
     setRegPassword('');
     setRegAgreement(false);
-  };
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      alert(err.response?.data?.error || 'Ошибка регистрации');
+    }
+  }
+};
 
   // Метод выполнения поиска при клике на лупу или Enter
-  const executeSearch = () => {
-    setActiveSearchFilter(searchQuery);
-    setIsSearchFocused(false);
-    if (searchInputRef.current) {
-      searchInputRef.current.blur();
-    }
-    alert(`Поиск по запросу: "${searchQuery || 'пустая строка'}"\nВ реальном приложении здесь произойдет переход на главную с фильтрацией.`);
-  };
+const executeSearch = () => {
+  setIsSearchFocused(false);
+  if (searchInputRef.current) {
+    searchInputRef.current.blur();
+  }
+  onSearch(searchQuery);
+};
 
   // Метод очистки строки поиска
   const clearSearch = () => {
@@ -201,11 +227,11 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
           
           <form onSubmit={handleLoginSubmit} style={styles.modalForm}>
             <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Логин или Email</label>
+              <label style={styles.inputLabel}>Email</label>
               <input 
                 type="text" 
                 required
-                placeholder="Введите логин"
+                placeholder="Введите email"
                 value={loginValue}
                 onChange={(e) => setLoginValue(e.target.value)}
                 style={styles.modalInput}
@@ -617,14 +643,19 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
       {/* --- ОСНОВНОЙ КОНТЕНТ СТРАНИЦЫ ТОВАРA --- */}
       <main style={styles.mainContent}>
         
-        {/* Хлебные крошки */}
-        <div style={styles.breadcrumbs}>
-          <span style={styles.breadcrumbLink} onClick={onBackToMain}>Главная</span>
-          <span style={styles.breadcrumbDivider}>/</span>
-          <span style={styles.breadcrumbLink} onClick={() => alert('Переход в Фермерские продукты')}>Фермерские продукты</span>
-          <span style={styles.breadcrumbDivider}>/</span>
-          <span style={styles.breadcrumbCurrent}>{PRODUCT_DATA.title}</span>
-        </div>
+{/* Хлебные крошки */}
+<div style={styles.breadcrumbs}>
+  <span style={styles.breadcrumbLink} onClick={onBackToMain}>Главная</span>
+  <span style={styles.breadcrumbDivider}>/</span>
+  <span 
+    style={styles.breadcrumbLink} 
+    onClick={() => onCategorySelect(productData?.category || 'all')}
+  >
+    {CATEGORIES.find(c => c.id === productData?.category)?.name || 'Каталог'}
+  </span>
+  <span style={styles.breadcrumbDivider}>/</span>
+  <span style={styles.breadcrumbCurrent}>{productData?.title}</span>
+</div>
 
         {/* Индикатор текущего активного фильтра поиска, если применили */}
         {activeSearchFilter && (
@@ -641,8 +672,8 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
           {/* Левая колонка: Изображение */}
           <div style={styles.gallerySection}>
             <div style={styles.mainImageWrapper}>
-              <img src={PRODUCT_DATA.imageUrl} alt={PRODUCT_DATA.title} style={styles.mainProductImage} />
-              {PRODUCT_DATA.isLocalVerified && (
+              <img src={productData?.image} alt={productData?.title} style={styles.mainProductImage} />
+              {productData?.is_local_verified && (
                 <span style={styles.pageVerifiedBadge}>🛡️ Проверенный продавец</span>
               )}
             </div>
@@ -650,24 +681,24 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
 
           {/* Правая колонка: Информация и покупка */}
           <div style={styles.infoSection}>
-            <h1 style={styles.productMainTitle}>{PRODUCT_DATA.title}</h1>
+            <h1 style={styles.productMainTitle}>{productData?.title}</h1>
             
             <div style={styles.ratingAndReviewsRow}>
               <div style={styles.starsContainer}>
                 <span style={{ color: COLORS.rating, fontSize: '18px' }}>★</span>
-                <span style={styles.ratingValueText}>{PRODUCT_DATA.rating}</span>
+                <span style={styles.ratingValueText}>{productData?.rating}</span>
               </div>
-              <span style={styles.reviewsCountText}>{PRODUCT_DATA.reviewsCount} отзывов покупателей</span>
+              <span style={styles.reviewsCountText}>{productData?.reviews_count} отзывов покупателей</span>
             </div>
 
             <div style={styles.priceCard}>
               <div style={styles.pagePriceRow}>
-                <span style={styles.pageCurrentPrice}>{PRODUCT_DATA.price} ₽</span>
-                {PRODUCT_DATA.oldPrice && (
-                  <span style={styles.pageOldPrice}>{PRODUCT_DATA.oldPrice} ₽</span>
+                <span style={styles.pageCurrentPrice}>{productData?.price} ₽</span>
+                {productData?.old_price && (
+                  <span style={styles.pageOldPrice}>{productData?.old_price} ₽</span>
                 )}
-                {PRODUCT_DATA.oldPrice && (
-                  <span style={styles.discountBadge}>-{Math.round(((PRODUCT_DATA.oldPrice - PRODUCT_DATA.price) / PRODUCT_DATA.oldPrice) * 100)}%</span>
+                {productData?.old_price && (
+                  <span style={styles.discountBadge}>-{Math.round(((productData?.old_price - productData?.price) / productData?.old_price) * 100)}%</span>
                 )}
               </div>
               
@@ -691,8 +722,8 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
             <div style={styles.pageManufacturerBlock}>
               <div style={{ fontSize: '20px' }}>🏭</div>
               <div>
-                <div style={styles.pageManufacturerName}>{PRODUCT_DATA.manufacturer}</div>
-                <div style={styles.pageManufacturerCity}>{PRODUCT_DATA.city}</div>
+                <div style={styles.pageManufacturerName}>{productData?.manufacturer}</div>
+                <div style={styles.pageManufacturerCity}>{productData?.city}</div>
               </div>
               <div style={styles.localProductionTag}>Местное производство</div>
             </div>
@@ -726,10 +757,10 @@ export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, o
 
               <div style={styles.tabContent}>
                 {activeTab === 'desc' ? (
-                  <p style={styles.descriptionParagraph}>{PRODUCT_DATA.description}</p>
+                  <p style={styles.descriptionParagraph}>{productData?.description}</p>
                 ) : (
                   <div style={styles.specsTable}>
-                    {PRODUCT_DATA.specs.map((spec, index) => (
+                    {productData?.specs?.map((spec, index) => (
                       <div key={index} style={styles.specsRow}>
                         <span style={styles.specLabel}>{spec.label}</span>
                         <span style={styles.specValue}>{spec.value}</span>
