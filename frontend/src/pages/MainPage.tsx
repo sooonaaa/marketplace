@@ -9,14 +9,14 @@ interface Product {
   id: number;
   title: string;
   price: number;
-  oldPrice?: number;
+  old_price?: number;
   category: string;
   rating: number;
-  reviewsCount: number;
+  reviews_count: number;
   manufacturer: string;
   city: string;
-  imageUrl: string;
-  isLocalVerified: boolean;
+  image?: string;
+  is_local_verified: boolean;
 }
 
 interface Category {
@@ -172,7 +172,7 @@ useEffect(() => {
       const matchesSearch = product.title.toLowerCase().includes(activeSearchFilter.toLowerCase()) || 
                             product.manufacturer.toLowerCase().includes(activeSearchFilter.toLowerCase()) ||
                             product.city.toLowerCase().includes(activeSearchFilter.toLowerCase());
-      const matchesLocal = !onlyLocal || product.isLocalVerified;
+      const matchesLocal = !onlyLocal || product.is_local_verified;
       return matchesCategory && matchesSearch && matchesLocal;
     });
 
@@ -851,8 +851,8 @@ if (activePage === 'profile') {
                 onMouseLeave={() => setHoveredCardId(null)}
               >
                 <div style={styles.imageWrapper}>
-                  <img src={product.imageUrl} alt={product.title} style={styles.productImage} />
-                  {product.isLocalVerified && (
+                  <img src={product.image} alt={product.title} style={styles.productImage} />
+                  {product.is_local_verified && (
                     <span style={styles.verifiedBadge}>Проверенный продавец</span>
                   )}
                 </div>
@@ -860,13 +860,13 @@ if (activePage === 'profile') {
                 <div style={styles.cardBody}>
                   <div style={styles.priceRow}>
                     <span style={styles.currentPrice}>{product.price} ₽</span>
-                    {product.oldPrice && <span style={styles.oldPrice}>{product.oldPrice} ₽</span>}
+                    {product.old_price && <span style={styles.old_price}>{product.old_price} ₽</span>}
                   </div>
                   <h3 style={styles.productTitle} title={product.title}>{product.title}</h3>
                   <div style={styles.ratingRow}>
                     <span style={{ color: COLORS.rating }}>★</span>
                     <span style={styles.ratingValue}>{product.rating}</span>
-                    <span style={styles.reviewsCount}>({product.reviewsCount} отзывов)</span>
+                    <span style={styles.reviews_count}>({product.reviews_count} отзывов)</span>
                   </div>
                   <div style={styles.manufacturerBlock}>
                     <span style={styles.manufacturerName}>🏭 {product.manufacturer}</span>
@@ -1417,7 +1417,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: '800',
     color: COLORS.textDark
   },
-  oldPrice: {
+  old_price: {
     fontSize: '13px',
     color: COLORS.textMuted,
     textDecoration: 'line-through'
@@ -1446,7 +1446,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: '700',
     color: COLORS.textDark
   },
-  reviewsCount: {
+  reviews_count: {
     color: COLORS.textMuted
   },
   manufacturerBlock: {
