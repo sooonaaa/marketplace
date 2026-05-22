@@ -3,6 +3,7 @@ import axios from 'axios';
 // Импортируем страницу продукта
 import ProductPage from './ProductPage'; 
 import ProfilePage from './ProfilePage';
+import type { Category } from '../constants/categories';
 
 // --- ТИПЫ И ИНТЕРФЕЙСЫ ---
 interface Product {
@@ -19,12 +20,6 @@ interface Product {
   is_local_verified: boolean;
 }
 
-interface Category {
-  id: string;
-  name: string;
-  icon: string;
-}
-
 // --- ЦВЕТОВАЯ ПАЛИТРА ---
 const COLORS = {
   background: '#F8F8EB',     
@@ -39,15 +34,6 @@ const COLORS = {
   rating: '#FAAD14',         
 };
 
-// --- ДЕМО-ДАННЫЕ ---
-const CATEGORIES: Category[] = [
-  { id: 'all', name: 'Все категории', icon: '📦' },
-  { id: 'food', name: 'Фермерские продукты', icon: '🧀' },
-  { id: 'clothes', name: 'Одежда и текстиль', icon: '👕' },
-  { id: 'crafts', name: 'Ремесло и сувениры', icon: '🏺' },
-  { id: 'home', name: 'Товары для дома', icon: '🏡' },
-];
-
 
 
 export default function MainPage() {
@@ -58,7 +44,9 @@ export default function MainPage() {
   const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-
+  const [categories, setCategories] = useState<Category[]>([
+    { id: 'all', name: 'Все категории', icon: '📦' }
+  ]);
   // Новое состояние для сортировки
   const [sortBy, setSortBy] = useState<string>('rating');
 
@@ -78,6 +66,14 @@ export default function MainPage() {
     .catch(err => console.error('Ошибка загрузки продуктов:', err));
 }, [activeSearchFilter, selectedCategory]);
 
+useEffect(() => {
+  axios.get('http://localhost:8000/api/categories/')
+    .then(res => setCategories([
+      { id: 'all', name: 'Все категории', icon: '📦' },
+      ...res.data
+    ]))
+    .catch(err => console.error('Ошибка загрузки категорий:', err));
+}, []);
   // Состояния авторизации
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
 
@@ -183,9 +179,9 @@ export default function MainPage() {
   }, [products, selectedCategory, sortBy]);
 
   const currentCategoryName = useMemo(() => {
-    const cat = CATEGORIES.find(c => c.id === selectedCategory);
+    const cat = categories.find(c => c.id === selectedCategory);
     return cat ? cat.name : 'Каталог';
-  }, [selectedCategory]);
+  }, [selectedCategory, categories]);
 
  const handleLoginSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
@@ -534,7 +530,7 @@ if (activePage === 'profile') {
           </button>
         </div>
         <div style={styles.drawerContent}>
-          {CATEGORIES.map(category => {
+          {categories.map(category => {
             const isSelected = selectedCategory === category.id;
             const isHovered = hoveredCatalogCatId === category.id;
             return (

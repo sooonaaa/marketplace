@@ -1,12 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-
+import type { Category } from '../constants/categories';
 // --- ТИПЫ И ИНТЕРФЕЙСЫ ---
-interface Category {
-  id: string;
-  name: string;
-  icon: string;
-}
 interface ProductPageProps {
   isLoggedIn: boolean;
   setIsLoggedIn: (value: boolean) => void;
@@ -30,24 +25,24 @@ const COLORS = {
   rating: '#FAAD14',         
 };
 
-// --- ДЕМО-ДАННЫЕ ---
-const CATEGORIES: Category[] = [
-  { id: 'all', name: 'Все категории', icon: '📦' },
-  { id: 'food', name: 'Фермерские продукты', icon: '🧀' },
-  { id: 'clothes', name: 'Одежда и текстиль', icon: '👕' },
-  { id: 'crafts', name: 'Ремесло и сувениры', icon: '🏺' },
-  { id: 'home', name: 'Товары для дома', icon: '🏡' },
-];
-
-// Данные конкретного товара
-
-
 export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, onCategorySelect, productId, onSearch }: ProductPageProps) {  const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearchFilter, setActiveSearchFilter] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [cartCount, setCartCount] = useState<number>(0);
+  const [categories, setCategories] = useState<Category[]>([
+  { id: 'all', name: 'Все категории', icon: '📦' }
+]);
+
+useEffect(() => {
+  axios.get('http://localhost:8000/api/categories/')
+    .then(res => setCategories([
+      { id: 'all', name: 'Все категории', icon: '📦' },
+      ...res.data
+    ]))
+    .catch(err => console.error('Ошибка загрузки категорий:', err));
+}, []);
   const [productData, setProductData] = useState<{
   id: number;
   title: string;
@@ -407,7 +402,7 @@ const executeSearch = () => {
           <button style={styles.drawerCloseButton} onClick={() => setIsCatalogOpen(false)}>✕</button>
         </div>
         <div style={styles.drawerContent}>
-          {CATEGORIES.map(category => {
+          {categories.map(category => {
             const isSelected = selectedCategory === category.id;
             const isHovered = hoveredCatalogCatId === category.id;
             return (
@@ -651,7 +646,7 @@ const executeSearch = () => {
     style={styles.breadcrumbLink} 
     onClick={() => onCategorySelect(productData?.category || 'all')}
   >
-    {CATEGORIES.find(c => c.id === productData?.category)?.name || 'Каталог'}
+    {categories.find(c => c.id === productData?.category)?.name || 'Каталог'}
   </span>
   <span style={styles.breadcrumbDivider}>/</span>
   <span style={styles.breadcrumbCurrent}>{productData?.title}</span>
