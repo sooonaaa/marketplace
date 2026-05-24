@@ -1,42 +1,50 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import type { Category } from '../constants/categories';
-// --- ТИПЫ И ИНТЕРФЕЙСЫ ---
+import type { CartItem } from '../types/cart';
+import { COLORS } from '../constants/colors';
+import { API_BASE_URL } from '../constants/api';
+import { addToCart, getCartCount, getProductQuantity, updateProductQuantity } from '../utils/cartStorage';
+import { saveAuth, clearAuth } from '../utils/authStorage';
+
 interface ProductPageProps {
   isLoggedIn: boolean;
   setIsLoggedIn: (value: boolean) => void;
+  cartItems: CartItem[];
+  setCartItems: React.Dispatch<React.SetStateAction<CartItem[]>>;
   onBackToMain: () => void;
+  onGoToCart: () => void;
+  onGoToProfile: () => void;
+  onGoToOrders: () => void;
   onCategorySelect: (categoryId: string) => void;
   productId: number;
   onSearch: (query: string) => void;
 } 
 
-// --- ЦВЕТОВАЯ ПАЛИТРА ---
-const COLORS = {
-  background: '#F8F8EB',     
-  cardBg: '#FFFFFF',         
-  primary: '#6A9D77',        // Фирменный шалфейный зеленый
-  primaryHover: '#558360',   
-  textDark: '#4E6053',       
-  textLight: '#FFFFFF',      
-  textMuted: '#8A9A8E',      
-  border: '#E3ECE6',         
-  accentLight: '#EAF0EB',    
-  rating: '#FAAD14',         
-};
 
-export default function ProductPage({ isLoggedIn, setIsLoggedIn, onBackToMain, onCategorySelect, productId, onSearch }: ProductPageProps) {  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [activeSearchFilter, setActiveSearchFilter] = useState<string>('');
+export default function ProductPage({
+  isLoggedIn,
+  setIsLoggedIn,
+  cartItems,
+  setCartItems,
+  onBackToMain,
+  onGoToCart,
+  onGoToProfile,
+  onGoToOrders,
+  onCategorySelect,
+  productId,
+  onSearch,
+}: ProductPageProps) {
+  const cartCount = useMemo(() => getCartCount(cartItems), [cartItems]);
+  const productQty = useMemo(() => getProductQuantity(cartItems, productId), [cartItems, productId]);  const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  const [cartCount, setCartCount] = useState<number>(0);
   const [categories, setCategories] = useState<Category[]>([
   { id: 'all', name: 'Все категории', icon: '📦' }
 ]);
 
 useEffect(() => {
-  axios.get('http://localhost:8000/api/categories/')
+  axios.get(`${API_BASE_URL}/api/categories/`)
     .then(res => setCategories([
       { id: 'all', name: 'Все категории', icon: '📦' },
       ...res.data
@@ -60,11 +68,11 @@ useEffect(() => {
 } | null>(null);
 
 useEffect(() => {
-  axios.get(`http://localhost:8000/api/products/${productId}/`)
+  axios.get(`${API_BASE_URL}/api/products/${productId}/`)
     .then(res => setProductData(res.data))
     .catch(err => console.error('Ошибка загрузки товара:', err));
 }, [productId]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('food'); // по умолчанию категория товара
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   // Состояния для боковых панелей и модальных окон
   const [isCatalogOpen, setIsCatalogOpen] = useState<boolean>(false);
@@ -105,17 +113,34 @@ useEffect(() => {
     regAgreement;
   // Интерактив на странице товара
   const [isOrderBtnHovered, setIsOrderBtnHovered] = useState(false);
+  const [isGoToCartHovered, setIsGoToCartHovered] = useState(false);
   const [activeTab, setActiveTab] = useState<'desc' | 'specs'>('desc');
+
+  const handleAddToCart = () => {
+    if (!productData) return;
+    setCartItems((prev) =>
+      addToCart(prev, {
+        productId: productData.id,
+        title: productData.title,
+        price: Number(productData.price),
+        image: productData.image,
+      })
+    );
+  };
+
+  const handleQtyChange = (delta: number) => {
+    const nextQty = productQty + delta;
+    setCartItems((prev) => updateProductQuantity(prev, productId, nextQty));
+  };
 
 const handleLoginSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   try {
-    const res = await axios.post('http://localhost:8000/api/auth/login/', {
+    const res = await axios.post(`${API_BASE_URL}/api/auth/login/`, {
       email: loginValue,
       password: passwordValue,
     });
-    localStorage.setItem('access_token', res.data.access);
-    localStorage.setItem('user_name', res.data.name);
+    saveAuth(res.data.access, res.data.refresh, res.data.name);
     setIsLoggedIn(true);
     setIsLoginModalOpen(false);
     setLoginValue('');
@@ -129,12 +154,14 @@ const handleRegisterSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   if (!isFormValid) return;
   try {
-    await axios.post('http://localhost:8000/api/auth/register/', {
+    const res = await axios.post(`${API_BASE_URL}/api/auth/register/`, {
       name: regName,
       email: regEmail,
       phone: regPhone,
       password: regPassword,
     });
+    saveAuth(res.data.access, res.data.refresh, res.data.name);
+    setIsLoggedIn(true);
     alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
     setIsRegisterModalOpen(false);
     setRegName('');
@@ -158,12 +185,6 @@ const executeSearch = () => {
   onSearch(searchQuery);
 };
 
-  // Метод очистки строки поиска
-  const clearSearch = () => {
-    setSearchQuery('');
-    setActiveSearchFilter('');
-    setIsSearchFocused(false);
-  };
 
   // Логика затемнения (экран темнеет всегда, когда инпут в фокусе)
   const shouldShowSearchOverlay = isSearchFocused;
@@ -511,7 +532,13 @@ const executeSearch = () => {
               onMouseLeave={() => setIsLoginHovered(false)}
             >
               <div 
-                onClick={() => !isLoggedIn && setIsLoginModalOpen(true)}
+                onClick={() => {
+                  if (isLoggedIn) {
+                    onGoToProfile();
+                  } else {
+                    setIsLoginModalOpen(true);
+                  }
+                }}
                 style={{
                   ...styles.actionItem,
                   color: isLoginHovered || isLoginModalOpen || isRegisterModalOpen ? COLORS.textLight : COLORS.accentLight,
@@ -567,7 +594,10 @@ const executeSearch = () => {
                         }}
                         onMouseEnter={() => setIsPopLkHovered(true)}
                         onMouseLeave={() => setIsPopLkHovered(false)}
-                        onClick={() => alert('Переход в Личный кабинет')}
+                        onClick={() => {
+                          onGoToProfile();
+                          setIsLoginHovered(false);
+                        }}
                       >
                         Личный кабинет
                       </button>
@@ -580,7 +610,10 @@ const executeSearch = () => {
                         }}
                         onMouseEnter={() => setIsPopOrdersHovered(true)}
                         onMouseLeave={() => setIsPopOrdersHovered(false)}
-                        onClick={() => alert('Переход к заказам')}
+                        onClick={() => {
+                          onGoToOrders();
+                          setIsLoginHovered(false);
+                        }}
                       >
                         Заказы
                       </button>
@@ -594,6 +627,7 @@ const executeSearch = () => {
                         onMouseEnter={() => setIsPopLogoutHovered(true)}
                         onMouseLeave={() => setIsPopLogoutHovered(false)}
                         onClick={() => {
+                          clearAuth();
                           setIsLoggedIn(false);
                           setIsLoginHovered(false);
                         }}
@@ -606,29 +640,26 @@ const executeSearch = () => {
               )}
             </div>
 
-            {/* ИСПРАВЛЕНИЕ: Кнопка корзины в шапке отображается только если пользователь авторизован */}
-            {isLoggedIn && (
-              <div 
-                style={{ 
-                  ...styles.actionItem, 
-                  color: isCartHovered ? COLORS.textLight : COLORS.accentLight,
-                  transform: isCartHovered ? 'translateY(-1px)' : 'translateY(0)'
-                }} 
-                onClick={() => alert('Переход в корзину')}
-                onMouseEnter={() => setIsCartHovered(true)}
-                onMouseLeave={() => setIsCartHovered(false)}
-              >
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="9" cy="21" r="1"></circle>
-                    <circle cx="20" cy="21" r="1"></circle>
-                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-                  </svg>
-                  {cartCount > 0 && <span style={styles.cartBadge}>{cartCount}</span>}
-                </div>
-                <span style={styles.actionText}>Корзина</span>
+            <div 
+              style={{ 
+                ...styles.actionItem, 
+                color: isCartHovered ? COLORS.textLight : COLORS.accentLight,
+                transform: isCartHovered ? 'translateY(-1px)' : 'translateY(0)'
+              }} 
+              onClick={onGoToCart}
+              onMouseEnter={() => setIsCartHovered(true)}
+              onMouseLeave={() => setIsCartHovered(false)}
+            >
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="9" cy="21" r="1"></circle>
+                  <circle cx="20" cy="21" r="1"></circle>
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                </svg>
+                {cartCount > 0 && <span style={styles.cartBadge}>{cartCount}</span>}
               </div>
-            )}
+              <span style={styles.actionText}>Корзина</span>
+            </div>
 
           </div>
 
@@ -651,16 +682,6 @@ const executeSearch = () => {
   <span style={styles.breadcrumbDivider}>/</span>
   <span style={styles.breadcrumbCurrent}>{productData?.title}</span>
 </div>
-
-        {/* Индикатор текущего активного фильтра поиска, если применили */}
-        {activeSearchFilter && (
-          <div style={{ marginBottom: '16px', display: 'flex' }}>
-            <span style={styles.activeCategoryBadge}>
-              Поиск: «{activeSearchFilter}»
-              <button style={styles.resetCategoryButton} onClick={clearSearch}>✕</button>
-            </span>
-          </div>
-        )}
 
         <div style={styles.productLayout}>
           
@@ -697,10 +718,10 @@ const executeSearch = () => {
                 )}
               </div>
               
-              {/* ИСПРАВЛЕНИЕ: Кнопка покупки в карточке отображается только если пользователь авторизован */}
-              {isLoggedIn && (
-                <button 
-                  onClick={() => setCartCount(prev => prev + 1)}
+              {productQty === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleAddToCart}
                   style={{
                     ...styles.pageAddToCartButton,
                     backgroundColor: isOrderBtnHovered ? COLORS.primaryHover : COLORS.primary,
@@ -710,6 +731,38 @@ const executeSearch = () => {
                 >
                   Добавить в корзину
                 </button>
+              ) : (
+                <div style={styles.cartActionsRow}>
+                  <div style={styles.qtyControlGroup}>
+                    <button
+                      type="button"
+                      style={styles.qtyButton}
+                      onClick={() => handleQtyChange(-1)}
+                    >
+                      −
+                    </button>
+                    <span style={styles.qtyDisplay}>{productQty}</span>
+                    <button
+                      type="button"
+                      style={styles.qtyButton}
+                      onClick={() => handleQtyChange(1)}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onGoToCart}
+                    style={{
+                      ...styles.goToCartButton,
+                      backgroundColor: isGoToCartHovered ? COLORS.primaryHover : COLORS.primary,
+                    }}
+                    onMouseEnter={() => setIsGoToCartHovered(true)}
+                    onMouseLeave={() => setIsGoToCartHovered(false)}
+                  >
+                    В корзину
+                  </button>
+                </div>
               )}
             </div>
 
@@ -871,6 +924,11 @@ const styles: { [key: string]: React.CSSProperties } = {
   pageOldPrice: { fontSize: '16px', color: COLORS.textMuted, textDecoration: 'line-through' },
   discountBadge: { backgroundColor: '#E25C5C', color: '#FFFFFF', fontSize: '12px', fontWeight: '700', padding: '3px 8px', borderRadius: '6px', marginLeft: '4px' },
   pageAddToCartButton: { color: '#FFFFFF', border: 'none', borderRadius: '12px', padding: '14px 0', fontWeight: '700', fontSize: '16px', cursor: 'pointer', width: '100%', transition: 'background-color 0.2s ease', outline: 'none', boxShadow: '0 4px 12px rgba(106, 157, 119, 0.2)' },
+  cartActionsRow: { display: 'flex', gap: '12px', alignItems: 'stretch' },
+  qtyControlGroup: { display: 'flex', alignItems: 'center', gap: '8px', flex: 1, backgroundColor: '#FAFBF9', borderRadius: '12px', border: `1px solid ${COLORS.border}`, padding: '6px 10px', justifyContent: 'center' },
+  qtyButton: { width: '36px', height: '36px', borderRadius: '8px', border: `1px solid ${COLORS.border}`, backgroundColor: '#FFFFFF', color: COLORS.textDark, fontSize: '20px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  qtyDisplay: { minWidth: '32px', textAlign: 'center', fontWeight: '800', fontSize: '17px', color: COLORS.textDark },
+  goToCartButton: { flex: 1, color: '#FFFFFF', border: 'none', borderRadius: '12px', padding: '14px 16px', fontWeight: '700', fontSize: '15px', cursor: 'pointer', transition: 'background-color 0.2s ease', outline: 'none', boxShadow: '0 4px 12px rgba(106, 157, 119, 0.2)' },
   
   pageManufacturerBlock: { display: 'flex', alignItems: 'center', gap: '14px', backgroundColor: '#EAF0EB', padding: '14px 18px', borderRadius: '12px', border: '1px solid rgba(106, 157, 119, 0.15)', position: 'relative' },
   pageManufacturerName: { fontSize: '15px', fontWeight: '700', color: COLORS.textDark },

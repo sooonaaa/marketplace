@@ -5,6 +5,7 @@ __pycache__/
 .env
 db.sqlite3
 backend/media/
+backend/.env
 
 # Logs
 logs

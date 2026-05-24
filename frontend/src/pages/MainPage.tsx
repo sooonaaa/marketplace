@@ -1,9 +1,19 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import axios from 'axios';
-// Импортируем страницу продукта
 import ProductPage from './ProductPage'; 
 import ProfilePage from './ProfilePage';
+import CartPage from './CartPage';
+import OrdersPage from './OrdersPage';
+import CheckoutModal from '../components/CheckoutModal';
+import type { CartItem } from '../types/cart';
 import type { Category } from '../constants/categories';
+import { COLORS } from '../constants/colors';
+import { API_BASE_URL } from '../constants/api';
+import { loadCart, saveCart, getCartCount } from '../utils/cartStorage';
+import { saveAuth, clearAuth, hasStoredAuth } from '../utils/authStorage';
+import { apiClient } from '../api/client';
+
+type ActivePage = 'main' | 'product' | 'profile' | 'cart' | 'orders';
 
 // --- ТИПЫ И ИНТЕРФЕЙСЫ ---
 interface Product {
@@ -20,25 +30,10 @@ interface Product {
   is_local_verified: boolean;
 }
 
-// --- ЦВЕТОВАЯ ПАЛИТРА ---
-const COLORS = {
-  background: '#F8F8EB',     
-  cardBg: '#FFFFFF',         
-  primary: '#6A9D77',        // Фирменный шалфейный зеленый
-  primaryHover: '#558360',   
-  textDark: '#4E6053',       
-  textLight: '#FFFFFF',      
-  textMuted: '#8A9A8E',      
-  border: '#E3ECE6',         
-  accentLight: '#EAF0EB',    
-  rating: '#FAAD14',         
-};
-
-
 
 export default function MainPage() {
   // Добавлено состояние навигации: 'main' или 'product'
-  const [activePage, setActivePage] = useState<'main' | 'product' | 'profile'>('main');
+  const [activePage, setActivePage] = useState<ActivePage>('main');
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [onlyLocal, setOnlyLocal] = useState<boolean>(false);
@@ -61,21 +56,41 @@ export default function MainPage() {
   if (activeSearchFilter) params.search = activeSearchFilter;
   if (selectedCategory && selectedCategory !== 'all') params.category = selectedCategory;
   
-  axios.get('http://localhost:8000/api/products/', { params })
+  axios.get(`${API_BASE_URL}/api/products/`, { params })
     .then(res => setProducts(res.data))
     .catch(err => console.error('Ошибка загрузки продуктов:', err));
 }, [activeSearchFilter, selectedCategory]);
 
 useEffect(() => {
-  axios.get('http://localhost:8000/api/categories/')
+  axios.get(`${API_BASE_URL}/api/categories/`)
     .then(res => setCategories([
       { id: 'all', name: 'Все категории', icon: '📦' },
       ...res.data
     ]))
     .catch(err => console.error('Ошибка загрузки категорий:', err));
 }, []);
-  // Состояния авторизации
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  // Состояния авторизации и корзины
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => hasStoredAuth());
+  const [cartItems, setCartItems] = useState<CartItem[]>(() => loadCart());
+  const cartCount = useMemo(() => getCartCount(cartItems), [cartItems]);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutItems, setCheckoutItems] = useState<CartItem[]>([]);
+  const [pendingCheckoutItems, setPendingCheckoutItems] = useState<CartItem[] | null>(null);
+
+  useEffect(() => {
+    saveCart(cartItems);
+  }, [cartItems]);
+
+  useEffect(() => {
+    if (!hasStoredAuth()) return;
+    apiClient
+      .get('/api/auth/me/')
+      .then(() => setIsLoggedIn(true))
+      .catch(() => {
+        clearAuth();
+        setIsLoggedIn(false);
+      });
+  }, []);
 
   // Состояния для боковых панелей и модальных окон
   const [isCatalogOpen, setIsCatalogOpen] = useState<boolean>(false);
@@ -167,16 +182,19 @@ useEffect(() => {
   }, [regName, regEmail, isEmailValid, regPhone, regPassword, regAgreement]);
 
 
-// Сортировка продуктов
+// Фильтрация и сортировка продуктов
   const filteredProducts = useMemo(() => {
-    const result = [...products];
+    let result = [...products];
+    if (onlyLocal) {
+      result = result.filter((p) => p.is_local_verified);
+    }
     if (selectedCategory !== 'all') {
       if (sortBy === 'cheap') result.sort((a, b) => a.price - b.price);
       else if (sortBy === 'expensive') result.sort((a, b) => b.price - a.price);
       else if (sortBy === 'rating') result.sort((a, b) => b.rating - a.rating);
     }
     return result;
-  }, [products, selectedCategory, sortBy]);
+  }, [products, selectedCategory, sortBy, onlyLocal]);
 
   const currentCategoryName = useMemo(() => {
     const cat = categories.find(c => c.id === selectedCategory);
@@ -186,16 +204,20 @@ useEffect(() => {
  const handleLoginSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   try {
-    const res = await axios.post('http://localhost:8000/api/auth/login/', {
+    const res = await axios.post(`${API_BASE_URL}/api/auth/login/`, {
       email: loginValue,
       password: passwordValue,
     });
-    localStorage.setItem('access_token', res.data.access);
-    localStorage.setItem('user_name', res.data.name);
+    saveAuth(res.data.access, res.data.refresh, res.data.name);
     setIsLoggedIn(true);
     setIsLoginModalOpen(false);
     setLoginValue('');
     setPasswordValue('');
+    if (pendingCheckoutItems?.length) {
+      setCheckoutItems(pendingCheckoutItems);
+      setPendingCheckoutItems(null);
+      setIsCheckoutOpen(true);
+    }
   } catch {
     alert('Неверный логин или пароль');
   }
@@ -205,12 +227,14 @@ const handleRegisterSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   if (!isFormValid) return;
   try {
-    await axios.post('http://localhost:8000/api/auth/register/', {
+    const res = await axios.post(`${API_BASE_URL}/api/auth/register/`, {
       name: regName,
       email: regEmail,
       phone: regPhone,
       password: regPassword,
     });
+    saveAuth(res.data.access, res.data.refresh, res.data.name);
+    setIsLoggedIn(true);
     alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
     setIsRegisterModalOpen(false);
     setRegName('');
@@ -250,8 +274,12 @@ if (activePage === 'product') {
     return (
       <ProductPage 
         isLoggedIn={isLoggedIn} 
-        setIsLoggedIn={setIsLoggedIn} 
-        onBackToMain={() => setActivePage('main')} 
+        setIsLoggedIn={setIsLoggedIn}
+        cartItems={cartItems}
+        setCartItems={setCartItems}
+        onBackToMain={() => setActivePage('main')}
+        onGoToCart={() => setActivePage('cart')}
+        onGoToProfile={() => setActivePage('profile')}
         productId={selectedProductId!}
         onSearch={(query) => {
           setSearchQuery(query);
@@ -262,18 +290,10 @@ if (activePage === 'product') {
           setSelectedCategory(categoryId);
           setActivePage('main');
         }}
+        onGoToOrders={() => setActivePage('orders')}
       />
     );
   }
-if (activePage === 'profile') {
-  return (
-    <ProfilePage 
-      isLoggedIn={isLoggedIn}
-      setIsLoggedIn={setIsLoggedIn}
-      onBackToMain={() => setActivePage('main')}
-    />
-  );
-}
   return (
     <div style={styles.pageContainer}>
       
@@ -539,6 +559,7 @@ if (activePage === 'profile') {
                 onClick={() => {
                   setSelectedCategory(category.id);
                   setIsCatalogOpen(false);
+                  setActivePage('main');
                 }}
                 onMouseEnter={() => setHoveredCatalogCatId(category.id)}
                 onMouseLeave={() => setHoveredCatalogCatId(null)}
@@ -564,7 +585,10 @@ if (activePage === 'profile') {
       <header style={{ ...styles.header, zIndex: shouldShowSearchOverlay ? 101 : 100 }}>
         <div style={styles.headerContent}>
           
-          <div style={styles.logoContainer}>
+          <div
+            style={{ ...styles.logoContainer, cursor: 'pointer' }}
+            onClick={() => setActivePage('main')}
+          >
             <span style={styles.logoIcon}>🌾</span>
             <div style={styles.logoText}>
               <h1 style={styles.logoTitle}>Чувашский Маркет</h1>
@@ -634,7 +658,13 @@ if (activePage === 'profile') {
               onMouseLeave={() => setIsLoginHovered(false)}
             >
               <div 
-                onClick={() => !isLoggedIn && setIsLoginModalOpen(true)}
+                onClick={() => {
+                  if (isLoggedIn) {
+                    setActivePage('profile');
+                  } else {
+                    setIsLoginModalOpen(true);
+                  }
+                }}
                 style={{
                   ...styles.actionItem,
                   color: isLoginHovered || isLoginModalOpen || isRegisterModalOpen ? COLORS.textLight : COLORS.accentLight,
@@ -706,7 +736,10 @@ if (activePage === 'profile') {
                         }}
                         onMouseEnter={() => setIsPopOrdersHovered(true)}
                         onMouseLeave={() => setIsPopOrdersHovered(false)}
-                        onClick={() => alert('Переход к заказам')}
+                        onClick={() => {
+                          setActivePage('orders');
+                          setIsLoginHovered(false);
+                        }}
                       >
                         Заказы
                       </button>
@@ -720,6 +753,7 @@ if (activePage === 'profile') {
                         onMouseEnter={() => setIsPopLogoutHovered(true)}
                         onMouseLeave={() => setIsPopLogoutHovered(false)}
                         onClick={() => {
+                          clearAuth();
                           setIsLoggedIn(false);
                           setIsLoginHovered(false);
                         }}
@@ -732,27 +766,26 @@ if (activePage === 'profile') {
               )}
             </div>
 
-            {isLoggedIn && (
-              <div 
-                style={{ 
-                  ...styles.actionItem, 
-                  color: isCartHovered ? COLORS.textLight : COLORS.accentLight,
-                  transform: isCartHovered ? 'translateY(-1px)' : 'translateY(0)'
-                }} 
-                onClick={() => alert('Переход в корзину')}
-                onMouseEnter={() => setIsCartHovered(true)}
-                onMouseLeave={() => setIsCartHovered(false)}
-              >
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="9" cy="21" r="1"></circle>
-                    <circle cx="20" cy="21" r="1"></circle>
-                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-                  </svg>
-                </div>
-                <span style={styles.actionText}>Корзина</span>
+            <div 
+              style={{ 
+                ...styles.actionItem, 
+                color: isCartHovered ? COLORS.textLight : COLORS.accentLight,
+                transform: isCartHovered ? 'translateY(-1px)' : 'translateY(0)'
+              }} 
+              onClick={() => setActivePage('cart')}
+              onMouseEnter={() => setIsCartHovered(true)}
+              onMouseLeave={() => setIsCartHovered(false)}
+            >
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="9" cy="21" r="1"></circle>
+                  <circle cx="20" cy="21" r="1"></circle>
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                </svg>
+                {cartCount > 0 && <span style={styles.cartBadge}>{cartCount}</span>}
               </div>
-            )}
+              <span style={styles.actionText}>Корзина</span>
+            </div>
 
           </div>
 
@@ -760,7 +793,60 @@ if (activePage === 'profile') {
       </header>
 
       <main style={styles.mainContent}>
-        
+
+        {activePage === 'profile' && (
+          <ProfilePage
+            key={isLoggedIn ? 'profile-auth' : 'profile-guest'}
+            isLoggedIn={isLoggedIn}
+            onLoginRequest={() => setIsLoginModalOpen(true)}
+            onGoToOrders={() => setActivePage('orders')}
+          />
+        )}
+
+        {activePage === 'cart' && (
+          <CartPage
+            cartItems={cartItems}
+            setCartItems={setCartItems}
+            onProductClick={(id) => {
+              setSelectedProductId(id);
+              setActivePage('product');
+            }}
+            onProceedToCheckout={(selected) => {
+              if (!isLoggedIn) {
+                setPendingCheckoutItems(selected);
+                setIsLoginModalOpen(true);
+              } else {
+                setCheckoutItems(selected);
+                setIsCheckoutOpen(true);
+              }
+            }}
+          />
+        )}
+
+        {activePage === 'orders' && (
+          <OrdersPage
+            key={isLoggedIn ? 'orders-auth' : 'orders-guest'}
+            isLoggedIn={isLoggedIn}
+            onLoginRequest={() => setIsLoginModalOpen(true)}
+          />
+        )}
+
+        {isCheckoutOpen && checkoutItems.length > 0 && (
+          <CheckoutModal
+            items={checkoutItems}
+            onClose={() => setIsCheckoutOpen(false)}
+            onSuccess={() => {
+              const orderedIds = new Set(checkoutItems.map((i) => i.productId));
+              setCartItems((prev) => prev.filter((i) => !orderedIds.has(i.productId)));
+              setIsCheckoutOpen(false);
+              setCheckoutItems([]);
+              setActivePage('orders');
+            }}
+          />
+        )}
+
+        {activePage === 'main' && (
+        <>
         <section style={styles.banner}>
           <div style={styles.bannerTextContainer}>
             <span style={styles.bannerTag}>Экосистема локальных брендов</span>
@@ -867,6 +953,8 @@ if (activePage === 'profile') {
               </div>
             ))}
           </div>
+        )}
+        </>
         )}
 
       </main>
@@ -1174,6 +1262,23 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '12px',              
     fontWeight: '600',
     letterSpacing: '0.2px'
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: '-6px',
+    right: '-10px',
+    backgroundColor: COLORS.textDark,
+    color: '#FFFFFF',
+    fontSize: '10px',
+    fontWeight: '700',
+    borderRadius: '50%',
+    width: '16px',
+    height: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+    border: `1px solid ${COLORS.primary}`
   },
   loginPopover: {
     position: 'absolute',
