@@ -1,9 +1,10 @@
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db import models
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -19,47 +20,98 @@ from .models import (
     ReturnRequest,
     ReturnRequestItem,
     ReturnRequestPhoto,
+    SavedPaymentCard,
+    SupportTicket,
 )
 
 STATUS_LABELS = {
-    'pending': 'Оформлен',
-    'shipping': 'В пути',
-    'delivered': 'Доставлен',
+    'placed': 'Оформлен',
+    'assembling': 'Собирается',
+    'awaiting_shipment': 'Ожидает отправки',
+    'in_delivery': 'В службе доставки',
+    'awaiting_seller': 'Ожидает у продавца',
+    'received': 'Получен',
     'cancelled': 'Отменён',
 }
 
 STATUS_COLORS = {
-    'pending': '#8A9A8E',
-    'shipping': '#FAAD14',
-    'delivered': '#6A9D77',
+    'placed': '#8A9A8E',
+    'assembling': '#8A9A8E',
+    'awaiting_shipment': '#FAAD14',
+    'in_delivery': '#FAAD14',
+    'awaiting_seller': '#FAAD14',
+    'received': '#6A9D77',
     'cancelled': '#FF4D4F',
 }
 
 DELIVERY_LABELS = {
-    'pickup': 'Самовывоз от продавца',
+    'pickup': 'Самовывоз у продавца',
     'courier': 'Доставка курьером',
 }
 
+GENDER_LABELS = {'male': 'Мужской', 'female': 'Женский'}
+BUSINESS_FORM_LABELS = {
+    'self_employed': 'Самозанятый',
+    'individual': 'Индивидуальный предприниматель',
+}
+
+
+def _parse_birth_date(value):
+    if not value:
+        return None
+    s = str(value).strip()
+    for fmt in ('%d.%m.%Y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _format_birth_date(d):
+    return d.strftime('%d.%m.%Y') if d else ''
+
+
+def _display_name(user):
+    parts = [user.first_name, user.last_name]
+    return ' '.join(p for p in parts if p).strip() or user.email
+
 
 def _auth_response(user):
+    profile, _ = UserProfile.objects.get_or_create(user=user)
     refresh = RefreshToken.for_user(user)
     return {
         'access': str(refresh.access_token),
         'refresh': str(refresh),
-        'name': user.first_name,
+        'name': _display_name(user),
+        'first_name': user.first_name,
+        'last_name': user.last_name,
         'email': user.email,
+        'role': profile.role,
     }
 
 
 def _profile_data(user):
     profile, _ = UserProfile.objects.get_or_create(user=user)
-    return {
-        'name': user.first_name or user.username,
+    data = {
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'name': _display_name(user),
         'email': user.email,
         'phone': profile.phone,
         'city': profile.city,
+        'birth_date': _format_birth_date(profile.birth_date),
+        'gender': profile.gender,
+        'gender_label': GENDER_LABELS.get(profile.gender, ''),
+        'role': profile.role,
         'reg_date': user.date_joined.strftime('%d.%m.%Y'),
     }
+    if profile.role == 'seller':
+        data['patronymic'] = profile.patronymic
+        data['business_form'] = profile.business_form
+        data['business_form_label'] = BUSINESS_FORM_LABELS.get(profile.business_form, '')
+        data['inn'] = profile.inn
+    return data
 
 
 def _product_image_url(request, product):
@@ -74,6 +126,7 @@ def _order_item_data(request, item, user_id):
         image = _product_image_url(request, item.product)
     product_id = item.product_id_snapshot or (item.product_id if item.product_id else None)
     reviewed = False
+    returned = ReturnRequestItem.objects.filter(order_item_id=item.id).exists()
     if product_id and user_id:
         reviewed = ProductReview.objects.filter(
             user_id=user_id,
@@ -87,11 +140,14 @@ def _order_item_data(request, item, user_id):
         'quantity': float(item.quantity),
         'image': image,
         'reviewed': reviewed,
+        'returned': returned,
     }
 
 
 def _order_data(request, order):
-    received = order.received_at.strftime('%d.%m.%Y') if order.received_at else None
+    received = None
+    if order.status == 'received' and order.received_at:
+        received = order.received_at.strftime('%d.%m.%Y')
     return {
         'id': order.pk,
         'orderNumber': f'№ {order.pk}',
@@ -131,11 +187,14 @@ def _format_courier_address(data):
 
 @api_view(['POST'])
 def register(request):
-    name = request.data.get('name', '')
+    first_name = str(request.data.get('first_name', '')).strip()
+    last_name = str(request.data.get('last_name', '')).strip()
     email = request.data.get('email', '')
     phone = request.data.get('phone', '')
     password = request.data.get('password', '')
 
+    if not first_name or not last_name:
+        return Response({'error': 'Укажите имя и фамилию'}, status=400)
     if not email or not password:
         return Response({'error': 'Email и пароль обязательны'}, status=400)
 
@@ -146,10 +205,50 @@ def register(request):
         username=email,
         email=email,
         password=password,
-        first_name=name,
+        first_name=first_name,
+        last_name=last_name,
     )
-    UserProfile.objects.create(user=user, phone=phone)
+    UserProfile.objects.create(user=user, phone=phone, role='user')
 
+    return Response(_auth_response(user), status=201)
+
+
+@api_view(['POST'])
+def register_seller(request):
+    first_name = str(request.data.get('first_name', '')).strip()
+    last_name = str(request.data.get('last_name', '')).strip()
+    patronymic = str(request.data.get('patronymic', '')).strip()
+    email = request.data.get('email', '')
+    phone = request.data.get('phone', '')
+    password = request.data.get('password', '')
+    business_form = request.data.get('business_form', '')
+    inn = str(request.data.get('inn', '')).replace(' ', '')
+
+    if not all([first_name, last_name, patronymic, email, password]):
+        return Response({'error': 'Заполните обязательные поля'}, status=400)
+    if business_form not in ('self_employed', 'individual'):
+        return Response({'error': 'Выберите форму организации бизнеса'}, status=400)
+    if len(inn) != 12 or not inn.isdigit():
+        return Response({'error': 'ИНН должен содержать ровно 12 цифр'}, status=400)
+    if User.objects.filter(email=email).exists():
+        return Response({'error': 'Пользователь с таким email уже существует'}, status=400)
+
+    user = User.objects.create_user(
+        username=email,
+        email=email,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    UserProfile.objects.create(
+        user=user,
+        phone=phone,
+        role='seller',
+        patronymic=patronymic,
+        business_form=business_form,
+        inn=inn,
+        seller_needs_verification=True,
+    )
     return Response(_auth_response(user), status=201)
 
 
@@ -157,33 +256,69 @@ def register(request):
 def login(request):
     email = request.data.get('email', '')
     password = request.data.get('password', '')
+    expected_role = request.data.get('role')
 
     user = authenticate(username=email, password=password)
     if user is None:
         return Response({'error': 'Неверный логин или пароль'}, status=400)
 
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    if profile.role == 'admin':
+        return Response(_auth_response(user))
+    if expected_role == 'seller' and profile.role != 'seller':
+        return Response({'error': 'Этот аккаунт не зарегистрирован как продавец'}, status=400)
+    if expected_role == 'user' and profile.role == 'seller':
+        return Response({'error': 'Используйте вход для продавца'}, status=400)
+
     return Response(_auth_response(user))
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def me(request):
+    if request.method == 'GET':
+        return Response(_profile_data(request.user))
+
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    if 'first_name' in request.data:
+        request.user.first_name = str(request.data['first_name']).strip()
+    if 'last_name' in request.data:
+        request.user.last_name = str(request.data['last_name']).strip()
+    if 'phone' in request.data:
+        profile.phone = str(request.data['phone']).strip()
+    if 'city' in request.data:
+        profile.city = str(request.data['city']).strip()
+    if 'birth_date' in request.data:
+        profile.birth_date = _parse_birth_date(request.data['birth_date'])
+    if 'gender' in request.data:
+        g = str(request.data['gender']).strip()
+        profile.gender = g if g in ('male', 'female') else ''
+    if profile.role == 'seller' and any(
+        k in request.data for k in ('first_name', 'last_name', 'phone', 'patronymic', 'business_form', 'inn')
+    ):
+        profile.seller_needs_verification = True
+    request.user.save()
+    profile.save()
     return Response(_profile_data(request.user))
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def orders_list(request):
-    orders = (
-        Order.objects.filter(user=request.user)
-        .prefetch_related('items', 'items__product')
-    )
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    if profile.role in ('seller', 'admin'):
+        return Response({'error': 'Доступно только покупателям'}, status=403)
+    orders = Order.objects.filter(user=request.user).prefetch_related('items', 'items__product')
     return Response([_order_data(request, order) for order in orders])
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_order(request):
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    if profile.role in ('seller', 'admin'):
+        return Response({'error': 'Недоступно для этой роли'}, status=403)
+
     items_data = request.data.get('items', [])
     payment_method = request.data.get('payment_method', '')
     delivery_type = request.data.get('delivery_type', '')
@@ -192,7 +327,7 @@ def create_order(request):
     if payment_method not in ('card', 'sbp'):
         return Response({'error': 'Выберите способ оплаты'}, status=400)
     if delivery_type not in ('pickup', 'courier'):
-        return Response({'error': 'Выберите способ доставки'}, status=400)
+        return Response({'error': 'Выберите способ получения'}, status=400)
 
     if delivery_type == 'courier':
         required = ['address_city', 'address_street', 'address_house']
@@ -218,15 +353,13 @@ def create_order(request):
         order_items.append((product, quantity, line_total))
 
     delivery_method = DELIVERY_LABELS[delivery_type]
-    delivery_address = ''
-    if delivery_type == 'courier':
-        delivery_address = _format_courier_address(request.data)
+    delivery_address = _format_courier_address(request.data) if delivery_type == 'courier' else ''
 
     with transaction.atomic():
         order = Order.objects.create(
             user=request.user,
             total=total,
-            status='pending',
+            status='placed',
             delivery_type=delivery_type,
             delivery_method=delivery_method,
             delivery_address=delivery_address,
@@ -239,7 +372,7 @@ def create_order(request):
             address_intercom=request.data.get('address_intercom', ''),
             address_entrance=request.data.get('address_entrance', ''),
             address_floor=request.data.get('address_floor', ''),
-            received_at=date.today() + timedelta(days=5),
+            received_at=None,
         )
         for product, quantity, _ in order_items:
             OrderItem.objects.create(
@@ -266,6 +399,9 @@ def submit_review(request, order_id):
     except Order.DoesNotExist:
         return Response({'error': 'Заказ не найден'}, status=404)
 
+    if not _order_allows_review_return(order):
+        return Response({'error': 'Оценить товары можно только после получения заказа'}, status=400)
+
     if not product_id:
         return Response({'error': 'Укажите товар'}, status=400)
 
@@ -288,6 +424,8 @@ def submit_review(request, order_id):
     except Product.DoesNotExist:
         return Response({'error': 'Товар не найден'}, status=404)
 
+    text = (request.data.get('text') or '').strip()
+
     if ProductReview.objects.filter(user=request.user, product=product).exists():
         return Response({'error': 'Вы уже оценили этот товар'}, status=400)
 
@@ -296,8 +434,10 @@ def submit_review(request, order_id):
         product=product,
         order=order,
         rating=rating,
+        text=text,
+        status='pending',
     )
-    return Response({'success': True})
+    return Response({'success': True, 'message': 'Отзыв отправлен на модерацию'})
 
 
 @api_view(['POST'])
@@ -308,16 +448,16 @@ def submit_return(request, order_id):
     except Order.DoesNotExist:
         return Response({'error': 'Заказ не найден'}, status=404)
 
+    if not _order_allows_review_return(order):
+        return Response({'error': 'Вернуть товары можно только после получения заказа'}, status=400)
+
     items_json = request.data.get('items')
     if not items_json:
         return Response({'error': 'Выберите товары для возврата'}, status=400)
 
     import json
     try:
-        if isinstance(items_json, str):
-            items_list = json.loads(items_json)
-        else:
-            items_list = items_json
+        items_list = json.loads(items_json) if isinstance(items_json, str) else items_json
     except json.JSONDecodeError:
         return Response({'error': 'Некорректные данные'}, status=400)
 
@@ -336,6 +476,12 @@ def submit_return(request, order_id):
             except OrderItem.DoesNotExist:
                 return Response({'error': 'Позиция заказа не найдена'}, status=400)
 
+            if ReturnRequestItem.objects.filter(order_item=order_item).exists():
+                return Response(
+                    {'error': f'По товару «{order_item.title}» заявка на возврат уже создана'},
+                    status=400,
+                )
+
             return_item = ReturnRequestItem.objects.create(
                 return_request=return_req,
                 order_item=order_item,
@@ -350,15 +496,122 @@ def submit_return(request, order_id):
                 )
             for img in product_photos[:3]:
                 ReturnRequestPhoto.objects.create(
-                    return_item=return_item,
-                    photo_type='product',
-                    image=img,
+                    return_item=return_item, photo_type='product', image=img,
                 )
             for img in packaging_photos[:3]:
                 ReturnRequestPhoto.objects.create(
-                    return_item=return_item,
-                    photo_type='packaging',
-                    image=img,
+                    return_item=return_item, photo_type='packaging', image=img,
                 )
 
     return Response({'success': True, 'message': 'Заявка на возврат отправлена'})
+
+
+CANCEL_REASON_STATUSES = {
+    'pickup': {'placed', 'assembling', 'awaiting_seller'},
+    'courier': {'placed', 'assembling'},
+}
+CANCEL_INFO_STATUSES = {'courier': {'awaiting_shipment', 'in_delivery'}}
+FINAL_ORDER_STATUSES = {
+    'pickup': {'received'},
+    'courier': {'received'},
+}
+
+
+def _order_allows_review_return(order):
+    return order.status in FINAL_ORDER_STATUSES.get(order.delivery_type, set())
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def payment_card(request):
+    if request.method == 'GET':
+        try:
+            card = request.user.saved_card
+            return Response({
+                'lastFour': card.last_four,
+                'holderName': card.holder_name,
+                'expMonth': card.exp_month,
+                'expYear': card.exp_year,
+            })
+        except SavedPaymentCard.DoesNotExist:
+            return Response({'saved': False})
+
+    card_number = str(request.data.get('card_number', '')).replace(' ', '')
+    holder_name = str(request.data.get('holder_name', '')).strip()
+    exp_month = str(request.data.get('exp_month', '')).strip()
+    exp_year = str(request.data.get('exp_year', '')).strip()
+
+    if len(card_number) < 13:
+        return Response({'error': 'Некорректный номер карты'}, status=400)
+    if not holder_name:
+        return Response({'error': 'Укажите имя держателя карты'}, status=400)
+
+    last_four = card_number[-4:]
+    SavedPaymentCard.objects.update_or_create(
+        user=request.user,
+        defaults={
+            'last_four': last_four,
+            'holder_name': holder_name,
+            'exp_month': exp_month,
+            'exp_year': exp_year,
+        },
+    )
+    return Response({'success': True, 'lastFour': last_four})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_order(request, order_id):
+    try:
+        order = Order.objects.get(pk=order_id, user=request.user)
+    except Order.DoesNotExist:
+        return Response({'error': 'Заказ не найден'}, status=404)
+
+    if order.status == 'cancelled':
+        return Response({'error': 'Заказ уже отменён'}, status=400)
+
+    if order.status in CANCEL_INFO_STATUSES.get(order.delivery_type, set()):
+        return Response(
+            {
+                'error': 'in_transit',
+                'message': 'Заказ уже в пути или готовится к отправке. Обратитесь в службу поддержки.',
+            },
+            status=400,
+        )
+
+    allowed = CANCEL_REASON_STATUSES.get(order.delivery_type, set())
+    if order.status not in allowed:
+        return Response({'error': 'Этот заказ нельзя отменить'}, status=400)
+
+    reason = (request.data.get('reason') or '').strip()
+    custom_reason = (request.data.get('custom_reason') or '').strip()
+    if not reason:
+        return Response({'error': 'Укажите причину отмены'}, status=400)
+
+    order.status = 'cancelled'
+    order.cancellation_reason = f'{reason}. {custom_reason}'.strip() if custom_reason else reason
+    order.save(update_fields=['status', 'cancellation_reason'])
+    return Response(_order_data(request, order))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def support_ticket(request):
+    first_name = str(request.data.get('first_name', '')).strip()
+    last_name = str(request.data.get('last_name', '')).strip()
+    phone = str(request.data.get('phone', '')).strip()
+    email = str(request.data.get('email', '')).strip()
+    description = str(request.data.get('description', '')).strip()
+
+    if not all([first_name, last_name, phone, email, description]):
+        return Response({'error': 'Заполните все поля'}, status=400)
+
+    SupportTicket.objects.create(
+        user=request.user,
+        first_name=first_name,
+        last_name=last_name,
+        phone=phone,
+        email=email,
+        description=description,
+    )
+    return Response({'success': True}, status=201)

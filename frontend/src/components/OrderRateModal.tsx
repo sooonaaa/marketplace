@@ -16,6 +16,7 @@ export default function OrderRateModal({ order, onClose, onDone }: OrderRateModa
   );
   const [stepIndex, setStepIndex] = useState(0);
   const [rating, setRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -40,6 +41,7 @@ export default function OrderRateModal({ order, onClose, onDone }: OrderRateModa
       await apiClient.post(`/api/auth/orders/${order.id}/review/`, {
         product_id: currentItem.productId,
         rating,
+        text: reviewText.trim(),
       });
       if (stepIndex + 1 >= itemsToRate.length) {
         onDone();
@@ -47,6 +49,7 @@ export default function OrderRateModal({ order, onClose, onDone }: OrderRateModa
       } else {
         setStepIndex((s) => s + 1);
         setRating(0);
+        setReviewText('');
       }
     } catch (err: unknown) {
       const msg =
@@ -87,6 +90,13 @@ export default function OrderRateModal({ order, onClose, onDone }: OrderRateModa
           </button>
         ))}
       </div>
+      <textarea
+        value={reviewText}
+        onChange={(e) => setReviewText(e.target.value)}
+        placeholder="Поделитесь вашими впечатлениями от покупки"
+        style={styles.textarea}
+        rows={4}
+      />
       {error && <p style={styles.error}>{error}</p>}
       <button
         type="button"
@@ -179,6 +189,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   error: { color: '#FF4D4F', fontSize: '13px', margin: '0 0 10px 0' },
+  textarea: {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    border: `1px solid ${COLORS.border}`,
+    fontSize: '14px',
+    marginBottom: '14px',
+    resize: 'vertical',
+    boxSizing: 'border-box',
+    fontFamily: 'inherit',
+  },
   submitBtn: {
     width: '100%',
     padding: '12px 0',

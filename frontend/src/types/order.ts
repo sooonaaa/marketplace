@@ -6,6 +6,7 @@ export interface OrderItemData {
   quantity: number;
   image: string;
   reviewed: boolean;
+  returned: boolean;
 }
 
 export interface OrderData {

@@ -7,6 +7,8 @@ from .models import (
     ReturnRequest,
     ReturnRequestItem,
     ReturnRequestPhoto,
+    SavedPaymentCard,
+    Promotion,
 )
 
 
@@ -45,3 +47,13 @@ class ReturnRequestItemInline(admin.TabularInline):
 class ReturnRequestAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'order', 'status', 'created_at')
     inlines = [ReturnRequestItemInline]
+
+
+@admin.register(SavedPaymentCard)
+class SavedPaymentCardAdmin(admin.ModelAdmin):
+    list_display = ('user', 'last_four', 'holder_name', 'exp_month', 'exp_year', 'created_at')
+
+
+@admin.register(Promotion)
+class PromotionAdmin(admin.ModelAdmin):
+    list_display = ('title', 'promo_code', 'seller', 'is_active', 'created_at')

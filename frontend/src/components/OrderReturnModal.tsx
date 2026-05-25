@@ -18,8 +18,9 @@ interface OrderReturnModalProps {
 }
 
 export default function OrderReturnModal({ order, onClose, onDone }: OrderReturnModalProps) {
+  const returnableItems = order.items.filter((item) => !item.returned);
   const [items, setItems] = useState<ReturnItemState[]>(
-    order.items.map((item) => ({
+    returnableItems.map((item) => ({
       orderItemId: item.id,
       selected: false,
       reason: '',
@@ -29,6 +30,23 @@ export default function OrderReturnModal({ order, onClose, onDone }: OrderReturn
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  if (returnableItems.length === 0) {
+    return (
+      <>
+        <div style={styles.overlay} onClick={onClose} />
+        <div style={styles.modal}>
+          <div style={styles.header}>
+            <h2 style={styles.title}>Вернуть товары</h2>
+            <button type="button" style={styles.closeBtn} onClick={onClose}>✕</button>
+          </div>
+          <div style={styles.body}>
+            <p style={{ margin: 0, color: COLORS.textMuted }}>По всем товарам из этого заказа заявки на возврат уже созданы.</p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   const updateItem = (id: number, patch: Partial<ReturnItemState>) => {
     setItems((prev) => prev.map((i) => (i.orderItemId === id ? { ...i, ...patch } : i)));
@@ -108,7 +126,7 @@ export default function OrderReturnModal({ order, onClose, onDone }: OrderReturn
         </div>
         <div style={styles.body}>
           {items.map((state, idx) => {
-            const orderItem = order.items[idx];
+            const orderItem = returnableItems[idx];
             return (
               <div key={state.orderItemId} style={styles.itemBlock}>
                 <label style={styles.checkRow}>

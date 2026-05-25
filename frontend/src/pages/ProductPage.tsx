@@ -5,7 +5,9 @@ import type { CartItem } from '../types/cart';
 import { COLORS } from '../constants/colors';
 import { API_BASE_URL } from '../constants/api';
 import { addToCart, getCartCount, getProductQuantity, updateProductQuantity } from '../utils/cartStorage';
-import { saveAuth, clearAuth } from '../utils/authStorage';
+import { clearAuth, hasStoredAuth } from '../utils/authStorage';
+import { useAuthModal } from '../context/AuthModalContext';
+import GuestAuthPopover from '../components/auth/GuestAuthPopover';
 
 interface ProductPageProps {
   isLoggedIn: boolean;
@@ -35,6 +37,7 @@ export default function ProductPage({
   productId,
   onSearch,
 }: ProductPageProps) {
+  const auth = useAuthModal();
   const cartCount = useMemo(() => getCartCount(cartItems), [cartItems]);
   const productQty = useMemo(() => getProductQuantity(cartItems, productId), [cartItems, productId]);  const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
@@ -67,54 +70,49 @@ useEffect(() => {
   specs?: { label: string; value: string }[];
 } | null>(null);
 
+interface ProductReviewItem {
+  id: number;
+  author: string;
+  first_name?: string;
+  last_name?: string;
+  rating: number;
+  text: string;
+  date: string;
+}
+
+const [productReviews, setProductReviews] = useState<ProductReviewItem[]>([]);
+
 useEffect(() => {
   axios.get(`${API_BASE_URL}/api/products/${productId}/`)
     .then(res => setProductData(res.data))
     .catch(err => console.error('Ошибка загрузки товара:', err));
 }, [productId]);
+
+useEffect(() => {
+  axios
+    .get<ProductReviewItem[]>(`${API_BASE_URL}/api/products/${productId}/reviews/`)
+    .then((res) => setProductReviews(res.data))
+    .catch(() => setProductReviews([]));
+}, [productId]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   // Состояния для боковых панелей и модальных окон
   const [isCatalogOpen, setIsCatalogOpen] = useState<boolean>(false);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
 
   // Состояния для интерактивных элементов шапки
   const [isCatalogHovered, setIsCatalogHovered] = useState(false);
   const [isLoginHovered, setIsLoginHovered] = useState(false);
   const [isCartHovered, setIsCartHovered] = useState(false);
   
-  // Состояния для ховера кнопок внутри поповеров и модалок
-  const [isPopLoginHovered, setIsPopLoginHovered] = useState(false);
-  const [isPopRegHovered, setIsPopRegHovered] = useState(false);
   const [isPopLkHovered, setIsPopLkHovered] = useState(false);
   const [isPopOrdersHovered, setIsPopOrdersHovered] = useState(false);
   const [isPopLogoutHovered, setIsPopLogoutHovered] = useState(false);
-  const [isModalSubmitHovered, setIsModalSubmitHovered] = useState(false);
-  const [isRegSubmitHovered, setIsRegSubmitHovered] = useState(false);
   const [hoveredCatalogCatId, setHoveredCatalogCatId] = useState<string | null>(null);
 
-  // Поля ввода формы авторизации
-  const [loginValue, setLoginValue] = useState('');
-  const [passwordValue, setPasswordValue] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
-
-  // Поля ввода формы регистрации
-  const [regName, setRegName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPhone, setRegPhone] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regAgreement, setRegAgreement] = useState(false);
-  const isFormValid = 
-    regName.trim().length > 0 &&
-    regEmail.trim().length > 0 &&
-    regPhone.length === 18 &&
-    regPassword.trim().length > 0 &&
-    regAgreement;
   // Интерактив на странице товара
   const [isOrderBtnHovered, setIsOrderBtnHovered] = useState(false);
   const [isGoToCartHovered, setIsGoToCartHovered] = useState(false);
-  const [activeTab, setActiveTab] = useState<'desc' | 'specs'>('desc');
+  const [activeTab, setActiveTab] = useState<'desc' | 'specs' | 'reviews'>('desc');
 
   const handleAddToCart = () => {
     if (!productData) return;
@@ -133,49 +131,6 @@ useEffect(() => {
     setCartItems((prev) => updateProductQuantity(prev, productId, nextQty));
   };
 
-const handleLoginSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  try {
-    const res = await axios.post(`${API_BASE_URL}/api/auth/login/`, {
-      email: loginValue,
-      password: passwordValue,
-    });
-    saveAuth(res.data.access, res.data.refresh, res.data.name);
-    setIsLoggedIn(true);
-    setIsLoginModalOpen(false);
-    setLoginValue('');
-    setPasswordValue('');
-  } catch {
-    alert('Неверный логин или пароль');
-  }
-};
-
-const handleRegisterSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!isFormValid) return;
-  try {
-    const res = await axios.post(`${API_BASE_URL}/api/auth/register/`, {
-      name: regName,
-      email: regEmail,
-      phone: regPhone,
-      password: regPassword,
-    });
-    saveAuth(res.data.access, res.data.refresh, res.data.name);
-    setIsLoggedIn(true);
-    alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
-    setIsRegisterModalOpen(false);
-    setRegName('');
-    setRegEmail('');
-    setRegPhone('');
-    setRegPassword('');
-    setRegAgreement(false);
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      alert(err.response?.data?.error || 'Ошибка регистрации');
-    }
-  }
-};
-
   // Метод выполнения поиска при клике на лупу или Enter
 const executeSearch = () => {
   setIsSearchFocused(false);
@@ -188,7 +143,13 @@ const executeSearch = () => {
 
   // Логика затемнения (экран темнеет всегда, когда инпут в фокусе)
   const shouldShowSearchOverlay = isSearchFocused;
-  const isAnyOverlayOpen = isCatalogOpen || isLoginModalOpen || isRegisterModalOpen || shouldShowSearchOverlay;
+  const isAnyOverlayOpen = isCatalogOpen || auth.isAnyAuthModalOpen || shouldShowSearchOverlay;
+
+  useEffect(() => {
+    const sync = () => setIsLoggedIn(hasStoredAuth());
+    window.addEventListener('chuvash-auth-updated', sync);
+    return () => window.removeEventListener('chuvash-auth-updated', sync);
+  }, [setIsLoggedIn]);
 
   return (
     <div style={styles.pageContainer}>
@@ -227,189 +188,10 @@ const executeSearch = () => {
         }}
         onClick={() => {
           setIsCatalogOpen(false);
-          setIsLoginModalOpen(false);
-          setIsRegisterModalOpen(false);
+          auth.closeAllModals();
           setIsSearchFocused(false);
         }}
       />
-
-      {/* --- МОДАЛЬНОЕ ОКНО АВТОРИЗАЦИИ --- */}
-      {isLoginModalOpen && (
-        <div style={styles.modalContainer}>
-          <div style={styles.modalHeader}>
-            <h2 style={styles.modalTitle}>Вход в личный кабинет</h2>
-            <button style={styles.modalCloseButton} onClick={() => setIsLoginModalOpen(false)}>✕</button>
-          </div>
-          
-          <form onSubmit={handleLoginSubmit} style={styles.modalForm}>
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Email</label>
-              <input 
-                type="text" 
-                required
-                placeholder="Введите email"
-                value={loginValue}
-                onChange={(e) => setLoginValue(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Пароль</label>
-              <input 
-                type="password" 
-                required
-                placeholder="Введите пароль"
-                value={passwordValue}
-                onChange={(e) => setPasswordValue(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.modalCheckboxRow}>
-              <label style={styles.modalCheckboxLabel}>
-                <input 
-                  type="checkbox" 
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  style={styles.checkbox}
-                />
-                <span style={styles.checkboxText}>Запомнить меня</span>
-              </label>
-              <span style={styles.forgotPassword}>Забыли пароль?</span>
-            </div>
-
-            <button 
-              type="submit"
-              style={{
-                ...styles.modalSubmitButton,
-                backgroundColor: isModalSubmitHovered ? COLORS.primaryHover : COLORS.primary,
-              }}
-              onMouseEnter={() => setIsModalSubmitHovered(true)}
-              onMouseLeave={() => setIsModalSubmitHovered(false)}
-            >
-              Войти
-            </button>
-
-            <div style={styles.switchModalRow}>
-              Ещё нет аккаунта?{' '}
-              <span 
-                style={styles.switchModalLink}
-                onClick={() => {
-                  setIsLoginModalOpen(false);
-                  setIsRegisterModalOpen(true);
-                }}
-              >
-                Зарегистрироваться
-              </span>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- МОДАЛЬНОЕ ОКНО РЕГИСТРАЦИИ --- */}
-      {isRegisterModalOpen && (
-        <div style={styles.modalContainer}>
-          <div style={styles.modalHeader}>
-            <h2 style={styles.modalTitle}>Регистрация</h2>
-            <button style={styles.modalCloseButton} onClick={() => setIsRegisterModalOpen(false)}>✕</button>
-          </div>
-          
-          <form onSubmit={handleRegisterSubmit} style={styles.modalForm}>
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Имя и Фамилия</label>
-              <input 
-                type="text" 
-                required
-                placeholder="Иван Иванов"
-                value={regName}
-                onChange={(e) => setRegName(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Электронная почта</label>
-              <input 
-                type="email" 
-                required
-                placeholder="example@mail.ru"
-                value={regEmail}
-                onChange={(e) => setRegEmail(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Номер телефона</label>
-              <input 
-                type="tel" 
-                required
-                placeholder="+7 (999) 000-00-00"
-                value={regPhone}
-                onChange={(e) => setRegPhone(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Пароль</label>
-              <input 
-                type="password" 
-                required
-                placeholder="Создайте сложный пароль"
-                value={regPassword}
-                onChange={(e) => setRegPassword(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={{ ...styles.modalCheckboxRow, alignItems: 'flex-start' }}>
-              <label style={styles.modalCheckboxLabel}>
-                <input 
-                  type="checkbox" 
-                  checked={regAgreement}
-                  onChange={(e) => setRegAgreement(e.target.checked)}
-                  style={{ ...styles.checkbox, marginTop: '2px' }}
-                />
-                <span style={{ ...styles.checkboxText, lineHeight: '1.4', fontSize: '12px', color: COLORS.textDark }}>
-                  Я согласен с условиями использования и правилами платформы
-                </span>
-              </label>
-            </div>
-
-            <button 
-              type="submit"
-              disabled={!regAgreement}
-              style={{
-                ...styles.modalSubmitButton,
-                backgroundColor: !regAgreement 
-                  ? '#C2CFC6' 
-                  : (isRegSubmitHovered ? COLORS.primaryHover : COLORS.primary),
-                cursor: regAgreement ? 'pointer' : 'not-allowed',
-                boxShadow: regAgreement ? '0 4px 10px rgba(106, 157, 119, 0.2)' : 'none'
-              }}
-              onMouseEnter={() => setIsRegSubmitHovered(true)}
-              onMouseLeave={() => setIsRegSubmitHovered(false)}
-            >
-              Создать аккаунт
-            </button>
-
-            <div style={styles.switchModalRow}>
-              Уже есть аккаунт?{' '}
-              <span 
-                style={styles.switchModalLink}
-                onClick={() => {
-                  setIsRegisterModalOpen(false);
-                  setIsLoginModalOpen(true);
-                }}
-              >
-                Войти
-              </span>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* --- ВЫДВИЖНОЙ КАТАЛОГ --- */}
       <div 
@@ -536,12 +318,12 @@ const executeSearch = () => {
                   if (isLoggedIn) {
                     onGoToProfile();
                   } else {
-                    setIsLoginModalOpen(true);
+                    auth.openBuyerLogin();
                   }
                 }}
                 style={{
                   ...styles.actionItem,
-                  color: isLoginHovered || isLoginModalOpen || isRegisterModalOpen ? COLORS.textLight : COLORS.accentLight,
+                  color: isLoginHovered || auth.isAnyAuthModalOpen ? COLORS.textLight : COLORS.accentLight,
                   transform: isLoginHovered ? 'translateY(-1px)' : 'translateY(0)'
                 }} 
               >
@@ -552,39 +334,18 @@ const executeSearch = () => {
                 <span style={styles.actionText}>{isLoggedIn ? 'Профиль' : 'Войти'}</span>
               </div>
 
-              {isLoginHovered && !isLoginModalOpen && !isRegisterModalOpen && (
-                <div style={styles.loginPopover}>
-                  <div style={styles.popoverArrow}></div>
+              {isLoginHovered && !auth.isAnyAuthModalOpen && (
+                <>
                   {!isLoggedIn ? (
-                    <>
-                      <button 
-                        style={{
-                          ...styles.popoverButton,
-                          backgroundColor: isPopLoginHovered ? COLORS.primaryHover : COLORS.primary,
-                          color: '#FFFFFF'
-                        }}
-                        onMouseEnter={() => setIsPopLoginHovered(true)}
-                        onMouseLeave={() => setIsPopLoginHovered(false)}
-                        onClick={() => setIsLoginModalOpen(true)}
-                      >
-                        Войти
-                      </button>
-                      <button 
-                        style={{
-                          ...styles.popoverButton,
-                          backgroundColor: isPopRegHovered ? COLORS.accentLight : '#FFFFFF',
-                          color: COLORS.textDark,
-                          border: `1px solid ${COLORS.border}`,
-                        }}
-                        onMouseEnter={() => setIsPopRegHovered(true)}
-                        onMouseLeave={() => setIsPopRegHovered(false)}
-                        onClick={() => setIsRegisterModalOpen(true)}
-                      >
-                        Зарегистрироваться
-                      </button>
-                    </>
+                    <GuestAuthPopover
+                      onLogin={auth.openBuyerLogin}
+                      onRegister={auth.openBuyerRegister}
+                      onSellerLogin={auth.openSellerLogin}
+                      onSellerRegister={auth.openSellerRegister}
+                    />
                   ) : (
-                    <>
+                    <div style={styles.loginPopover}>
+                      <div style={styles.popoverArrow}></div>
                       <button 
                         style={{
                           ...styles.popoverButton,
@@ -634,9 +395,9 @@ const executeSearch = () => {
                       >
                         Выйти
                       </button>
-                    </>
+                    </div>
                   )}
-                </div>
+                </>
               )}
             </div>
 
@@ -704,7 +465,11 @@ const executeSearch = () => {
                 <span style={{ color: COLORS.rating, fontSize: '18px' }}>★</span>
                 <span style={styles.ratingValueText}>{productData?.rating}</span>
               </div>
-              <span style={styles.reviewsCountText}>{productData?.reviews_count} отзывов покупателей</span>
+              <span style={styles.reviewsCountText}>
+                {productData && productData.reviews_count > 0
+                  ? `${productData.reviews_count} отзывов покупателей`
+                  : 'Отзывов нет'}
+              </span>
             </div>
 
             <div style={styles.priceCard}>
@@ -801,12 +566,23 @@ const executeSearch = () => {
                 >
                   Характеристики
                 </button>
+                <button 
+                  style={{
+                    ...styles.tabButton,
+                    color: activeTab === 'reviews' ? COLORS.primary : COLORS.textDark,
+                    borderBottom: activeTab === 'reviews' ? `3px solid ${COLORS.primary}` : '3px solid transparent',
+                    fontWeight: activeTab === 'reviews' ? '700' : '500'
+                  }}
+                  onClick={() => setActiveTab('reviews')}
+                >
+                  Отзывы ({productData?.reviews_count ?? productReviews.length})
+                </button>
               </div>
 
               <div style={styles.tabContent}>
                 {activeTab === 'desc' ? (
                   <p style={styles.descriptionParagraph}>{productData?.description}</p>
-                ) : (
+                ) : activeTab === 'specs' ? (
                   <div style={styles.specsTable}>
                     {productData?.specs?.map((spec, index) => (
                       <div key={index} style={styles.specsRow}>
@@ -814,6 +590,25 @@ const executeSearch = () => {
                         <span style={styles.specValue}>{spec.value}</span>
                       </div>
                     ))}
+                  </div>
+                ) : productReviews.length === 0 ? (
+                  <p style={styles.noReviewsText}>Отзывов нет</p>
+                ) : (
+                  <div style={styles.reviewsList}>
+                    {productReviews.map((review) => {
+                      const authorName = [review.first_name, review.last_name].filter(Boolean).join(' ').trim() || review.author;
+                      return (
+                      <div key={review.id} style={styles.reviewCard}>
+                        <div style={styles.reviewHeader}>
+                          <span style={styles.reviewAuthor}>{authorName}</span>
+                          <span style={styles.reviewDate}>{review.date}</span>
+                        </div>
+                        <div style={styles.reviewStars}>
+                          {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}
+                        </div>
+                        {review.text && <p style={styles.reviewText}>{review.text}</p>}
+                      </div>
+                    );})}
                   </div>
                 )}
               </div>
@@ -943,5 +738,13 @@ const styles: { [key: string]: React.CSSProperties } = {
   specsTable: { display: 'flex', flexDirection: 'column', gap: '12px' },
   specsRow: { display: 'flex', justifyContent: 'space-between', fontSize: '14px', paddingBottom: '8px', borderBottom: `1px dashed ${COLORS.border}` },
   specLabel: { color: COLORS.textMuted, fontWeight: '500' },
-  specValue: { color: COLORS.textDark, fontWeight: '600', textAlign: 'right', maxWidth: '60%' }
+  specValue: { color: COLORS.textDark, fontWeight: '600', textAlign: 'right', maxWidth: '60%' },
+  noReviewsText: { margin: 0, fontSize: '14px', color: COLORS.textMuted },
+  reviewsList: { display: 'flex', flexDirection: 'column', gap: '14px' },
+  reviewCard: { padding: '14px 0', borderBottom: `1px solid ${COLORS.border}` },
+  reviewHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' },
+  reviewAuthor: { fontSize: '14px', fontWeight: '700', color: COLORS.textDark },
+  reviewDate: { fontSize: '12px', color: COLORS.textMuted },
+  reviewStars: { color: COLORS.rating, fontSize: '14px', marginBottom: '8px', letterSpacing: '1px' },
+  reviewText: { margin: 0, fontSize: '14px', lineHeight: 1.55, color: COLORS.textDark },
 };

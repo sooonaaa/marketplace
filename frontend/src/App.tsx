@@ -1,7 +1,12 @@
-import MainPage from './pages/MainPage'; // Путь изменен на ./pages/
+import MainPage from './pages/MainPage';
+import { AuthModalProvider } from './context/AuthModalContext';
 
 function App() {
-  return <MainPage />;
+  return (
+    <AuthModalProvider>
+      <MainPage />
+    </AuthModalProvider>
+  );
 }
 
 export default App;

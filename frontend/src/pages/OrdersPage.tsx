@@ -4,18 +4,27 @@ import { apiClient } from '../api/client';
 import type { OrderData } from '../types/order';
 import OrderRateModal from '../components/OrderRateModal';
 import OrderReturnModal from '../components/OrderReturnModal';
+import OrderCancelModal from '../components/OrderCancelModal';
+import {
+  canCancelWithReason,
+  canCancelInfoOnly,
+  canRateAndReturn,
+} from '../utils/orderHelpers';
 
 interface OrdersPageProps {
   isLoggedIn: boolean;
   onLoginRequest: () => void;
+  embedded?: boolean;
 }
 
-export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPageProps) {
+export default function OrdersPage({ isLoggedIn, onLoginRequest, embedded }: OrdersPageProps) {
   const [orders, setOrders] = useState<OrderData[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [rateOrder, setRateOrder] = useState<OrderData | null>(null);
   const [returnOrder, setReturnOrder] = useState<OrderData | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<OrderData | null>(null);
+  const [cancelMode, setCancelMode] = useState<'reason' | 'info'>('reason');
 
   const loadOrders = useCallback(() => {
     if (!isLoggedIn) return;
@@ -39,6 +48,7 @@ export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPagePro
   }, [isLoggedIn, loadOrders]);
 
   if (!isLoggedIn) {
+    if (embedded) return <p style={styles.emptyText}>Войдите, чтобы видеть заказы</p>;
     return (
       <div style={styles.emptyState}>
         <h2 style={styles.emptyTitle}>Войдите в аккаунт</h2>
@@ -52,11 +62,10 @@ export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPagePro
 
   const loading = !hasFetched;
 
-  if (loading) {
-    return <div style={styles.loading}>Загрузка заказов...</div>;
-  }
+  if (loading) return <div style={styles.loading}>Загрузка заказов...</div>;
 
   if (fetchError) {
+    if (embedded) return <p style={styles.emptyText}>Не удалось загрузить заказы</p>;
     return (
       <div style={styles.emptyState}>
         <p style={styles.emptyText}>Не удалось загрузить заказы</p>
@@ -83,8 +92,17 @@ export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPagePro
           onDone={loadOrders}
         />
       )}
+      {cancelOrder && (
+        <OrderCancelModal
+          order={cancelOrder}
+          mode={cancelMode}
+          onClose={() => setCancelOrder(null)}
+          onDone={loadOrders}
+        />
+      )}
 
-      <h2 style={styles.pageTitle}>Мои заказы</h2>
+      {!embedded && <h2 style={styles.pageTitle}>Мои заказы</h2>}
+      {embedded && <h2 style={styles.pageTitle}>История заказов</h2>}
       {orders.length === 0 ? (
         <div style={styles.emptyState}>
           <p style={styles.emptyText}>У вас пока нет заказов</p>
@@ -112,10 +130,12 @@ export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPagePro
               <div style={styles.metaGrid}>
                 <div>
                   <span style={styles.metaLabel}>Дата получения</span>
-                  <span style={styles.metaValue}>{order.receivedAt || '—'}</span>
+                  <span style={styles.metaValue}>
+                    {order.statusKey === 'received' ? (order.receivedAt || '—') : '—'}
+                  </span>
                 </div>
                 <div>
-                  <span style={styles.metaLabel}>Способ доставки</span>
+                  <span style={styles.metaLabel}>Способ получения</span>
                   <span style={styles.metaValue}>{order.deliveryMethod}</span>
                 </div>
                 {order.deliveryType === 'courier' && order.deliveryAddress && (
@@ -147,20 +167,28 @@ export default function OrdersPage({ isLoggedIn, onLoginRequest }: OrdersPagePro
               </div>
 
               <div style={styles.actionsRow}>
-                <button
-                  type="button"
-                  style={styles.actionBtnPrimary}
-                  onClick={() => setRateOrder(order)}
-                >
-                  Оценить товары
-                </button>
-                <button
-                  type="button"
-                  style={styles.actionBtnSecondary}
-                  onClick={() => setReturnOrder(order)}
-                >
-                  Вернуть товары
-                </button>
+                {canRateAndReturn(order) && (
+                  <>
+                    <button type="button" style={styles.actionBtnPrimary} onClick={() => setRateOrder(order)}>
+                      Оценить товары
+                    </button>
+                    <button type="button" style={styles.actionBtnSecondary} onClick={() => setReturnOrder(order)}>
+                      Вернуть товары
+                    </button>
+                  </>
+                )}
+                {(canCancelWithReason(order) || canCancelInfoOnly(order)) && (
+                  <button
+                    type="button"
+                    style={styles.actionBtnCancel}
+                    onClick={() => {
+                      setCancelMode(canCancelInfoOnly(order) ? 'info' : 'reason');
+                      setCancelOrder(order);
+                    }}
+                  >
+                    Отменить заказ
+                  </button>
+                )}
               </div>
             </article>
           ))}
@@ -249,6 +277,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: `1px solid ${COLORS.border}`,
     backgroundColor: '#FFFFFF',
     color: COLORS.textDark,
+    fontWeight: '700',
+    fontSize: '13px',
+    cursor: 'pointer',
+  },
+  actionBtnCancel: {
+    padding: '10px 16px',
+    borderRadius: '10px',
+    border: '1px solid #FFCCC7',
+    backgroundColor: '#FFF2F0',
+    color: '#FF4D4F',
     fontWeight: '700',
     fontSize: '13px',
     cursor: 'pointer',

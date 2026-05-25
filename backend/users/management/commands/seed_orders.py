@@ -33,10 +33,10 @@ class Command(BaseCommand):
 
         order1 = Order.objects.create(
             user=user,
-            status='delivered',
+            status='received',
             total=Decimal('1250'),
             delivery_type='pickup',
-            delivery_method='Самовывоз от продавца',
+            delivery_method='Самовывоз у продавца',
             delivery_address='',
             payment_method='card',
             received_at=date.today() - timedelta(days=3),
@@ -64,7 +64,7 @@ class Command(BaseCommand):
         p2 = products[2] if len(products) > 2 else products[0]
         order2 = Order.objects.create(
             user=user,
-            status='shipping',
+            status='in_delivery',
             total=p2.price,
             delivery_type='courier',
             delivery_method='Доставка курьером',

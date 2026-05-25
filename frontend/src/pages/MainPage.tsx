@@ -3,17 +3,20 @@ import axios from 'axios';
 import ProductPage from './ProductPage'; 
 import ProfilePage from './ProfilePage';
 import CartPage from './CartPage';
-import OrdersPage from './OrdersPage';
+import SellerPage from './SellerPage';
+import AdminPage from './AdminPage';
 import CheckoutModal from '../components/CheckoutModal';
 import type { CartItem } from '../types/cart';
 import type { Category } from '../constants/categories';
 import { COLORS } from '../constants/colors';
 import { API_BASE_URL } from '../constants/api';
 import { loadCart, saveCart, getCartCount } from '../utils/cartStorage';
-import { saveAuth, clearAuth, hasStoredAuth } from '../utils/authStorage';
+import { clearAuth, hasStoredAuth, getUserRole } from '../utils/authStorage';
 import { apiClient } from '../api/client';
+import { useAuthModal } from '../context/AuthModalContext';
+import GuestAuthPopover from '../components/auth/GuestAuthPopover';
 
-type ActivePage = 'main' | 'product' | 'profile' | 'cart' | 'orders';
+type ActivePage = 'main' | 'product' | 'profile' | 'cart' | 'orders' | 'seller' | 'admin';
 
 // --- ТИПЫ И ИНТЕРФЕЙСЫ ---
 interface Product {
@@ -28,6 +31,7 @@ interface Product {
   city: string;
   image?: string;
   is_local_verified: boolean;
+  specs?: { label: string; value: string }[];
 }
 
 
@@ -44,6 +48,7 @@ export default function MainPage() {
   ]);
   // Новое состояние для сортировки
   const [sortBy, setSortBy] = useState<string>('rating');
+  const [specFilters, setSpecFilters] = useState<Record<string, string>>({});
 
   // Состояния для поиска
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -71,6 +76,9 @@ useEffect(() => {
 }, []);
   // Состояния авторизации и корзины
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => hasStoredAuth());
+  const [userRole, setUserRole] = useState<string>(() => getUserRole());
+  const isSeller = userRole === 'seller';
+  const isAdmin = userRole === 'admin';
   const [cartItems, setCartItems] = useState<CartItem[]>(() => loadCart());
   const cartCount = useMemo(() => getCartCount(cartItems), [cartItems]);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -81,112 +89,93 @@ useEffect(() => {
     saveCart(cartItems);
   }, [cartItems]);
 
+  const syncAuth = () => {
+    setIsLoggedIn(hasStoredAuth());
+    setUserRole(getUserRole());
+  };
+
   useEffect(() => {
     if (!hasStoredAuth()) return;
     apiClient
       .get('/api/auth/me/')
-      .then(() => setIsLoggedIn(true))
+      .then((res) => {
+        setIsLoggedIn(true);
+        setUserRole(res.data.role || 'user');
+        if (res.data.role === 'admin') {
+          setActivePage('admin');
+        } else if (res.data.role === 'seller') {
+          setActivePage('seller');
+        }
+      })
       .catch(() => {
         clearAuth();
-        setIsLoggedIn(false);
+        syncAuth();
       });
+  }, []);
+
+  useEffect(() => {
+    const onAuth = () => {
+      syncAuth();
+      const role = getUserRole();
+      if (role === 'admin') setActivePage('admin');
+      else if (role === 'seller') setActivePage('seller');
+      else if (pendingCheckoutItems?.length) {
+        setCheckoutItems(pendingCheckoutItems);
+        setPendingCheckoutItems(null);
+        setIsCheckoutOpen(true);
+      }
+    };
+    window.addEventListener('chuvash-auth-updated', onAuth);
+    return () => window.removeEventListener('chuvash-auth-updated', onAuth);
+  }, [pendingCheckoutItems]);
+
+  useEffect(() => {
+    axios.post(`${API_BASE_URL}/api/auth/analytics/visit/`, { path: '/' }).catch(() => {});
   }, []);
 
   // Состояния для боковых панелей и модальных окон
   const [isCatalogOpen, setIsCatalogOpen] = useState<boolean>(false);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
+  const auth = useAuthModal();
 
   // Состояния для интерактивных элементов шапки
   const [isCatalogHovered, setIsCatalogHovered] = useState(false);
   const [isLoginHovered, setIsLoginHovered] = useState(false);
   const [isCartHovered, setIsCartHovered] = useState(false);
   
-  // Состояния для ховера кнопок внутри поповеров и модалок
-  const [isPopLoginHovered, setIsPopLoginHovered] = useState(false);
-  const [isPopRegHovered, setIsPopRegHovered] = useState(false);
   const [isPopLkHovered, setIsPopLkHovered] = useState(false);
-  const [isPopOrdersHovered, setIsPopOrdersHovered] = useState(false);
   const [isPopLogoutHovered, setIsPopLogoutHovered] = useState(false);
-  const [isModalSubmitHovered, setIsModalSubmitHovered] = useState(false);
-  const [isRegSubmitHovered, setIsRegSubmitHovered] = useState(false);
   const [hoveredCatalogCatId, setHoveredCatalogCatId] = useState<string | null>(null);
-
-  // Поля ввода формы авторизации
-  const [loginValue, setLoginValue] = useState('');
-  const [passwordValue, setPasswordValue] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
-
-  // Поля ввода формы регистрации
-  const [regName, setRegName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPhone, setRegPhone] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regAgreement, setRegAgreement] = useState(false);
-
-  // Обработчик и маска для номера телефона в регистрации
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target.value;
-    const cleanNumbers = input.replace(/\D/g, '');
-    
-    if (!cleanNumbers) {
-      setRegPhone('');
-      return;
-    }
-
-    let formatted = '+7 ';
-    const digits = cleanNumbers[0] === '7' || cleanNumbers[0] === '8' 
-      ? cleanNumbers.substring(1, 11) 
-      : cleanNumbers.substring(0, 10);
-
-    if (digits.length > 0) {
-      formatted += `(${digits.substring(0, 3)}`;
-    }
-    if (digits.length >= 3) {
-      formatted += `) ${digits.substring(3, 6)}`;
-    }
-    if (digits.length >= 6) {
-      formatted += `-${digits.substring(6, 8)}`;
-    }
-    if (digits.length >= 8) {
-      formatted += `-${digits.substring(8, 10)}`;
-    }
-
-    setRegPhone(formatted);
-  };
-
-  // Ограничение ввода Email
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    const filteredVal = val.replace(/[^a-zA-Z0-9@._-]/g, '');
-    setRegEmail(filteredVal);
-  };
-
-  // Проверка Email на домен
-  const isEmailValid = useMemo(() => {
-    if (!regEmail) return true;
-    const emailRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    return emailRegex.test(regEmail);
-  }, [regEmail]);
-
-  // Проверка валидности формы регистрации
-  const isFormValid = useMemo(() => {
-    return (
-      regName.trim().length > 0 &&
-      regEmail.trim().length > 0 &&
-      isEmailValid &&
-      regPhone.length === 18 && 
-      regPassword.trim().length > 0 &&
-      regAgreement
-    );
-  }, [regName, regEmail, isEmailValid, regPhone, regPassword, regAgreement]);
-
+  const [profileSection, setProfileSection] = useState<'profile' | 'orders'>('profile');
 
 // Фильтрация и сортировка продуктов
+  const specFilterOptions = useMemo(() => {
+    if (selectedCategory === 'all') return {} as Record<string, string[]>;
+    const map: Record<string, Set<string>> = {};
+    for (const p of products) {
+      if (p.category !== selectedCategory) continue;
+      for (const spec of p.specs || []) {
+        if (!map[spec.label]) map[spec.label] = new Set();
+        map[spec.label].add(spec.value);
+      }
+    }
+    const result: Record<string, string[]> = {};
+    for (const [label, values] of Object.entries(map)) {
+      result[label] = Array.from(values).sort();
+    }
+    return result;
+  }, [products, selectedCategory]);
+
   const filteredProducts = useMemo(() => {
     let result = [...products];
     if (onlyLocal) {
       result = result.filter((p) => p.is_local_verified);
+    }
+    for (const [label, value] of Object.entries(specFilters)) {
+      if (value) {
+        result = result.filter((p) =>
+          (p.specs || []).some((s) => s.label === label && s.value === value)
+        );
+      }
     }
     if (selectedCategory !== 'all') {
       if (sortBy === 'cheap') result.sort((a, b) => a.price - b.price);
@@ -194,60 +183,12 @@ useEffect(() => {
       else if (sortBy === 'rating') result.sort((a, b) => b.rating - a.rating);
     }
     return result;
-  }, [products, selectedCategory, sortBy, onlyLocal]);
+  }, [products, selectedCategory, sortBy, onlyLocal, specFilters]);
 
   const currentCategoryName = useMemo(() => {
     const cat = categories.find(c => c.id === selectedCategory);
     return cat ? cat.name : 'Каталог';
   }, [selectedCategory, categories]);
-
- const handleLoginSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  try {
-    const res = await axios.post(`${API_BASE_URL}/api/auth/login/`, {
-      email: loginValue,
-      password: passwordValue,
-    });
-    saveAuth(res.data.access, res.data.refresh, res.data.name);
-    setIsLoggedIn(true);
-    setIsLoginModalOpen(false);
-    setLoginValue('');
-    setPasswordValue('');
-    if (pendingCheckoutItems?.length) {
-      setCheckoutItems(pendingCheckoutItems);
-      setPendingCheckoutItems(null);
-      setIsCheckoutOpen(true);
-    }
-  } catch {
-    alert('Неверный логин или пароль');
-  }
-};
-
-const handleRegisterSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!isFormValid) return;
-  try {
-    const res = await axios.post(`${API_BASE_URL}/api/auth/register/`, {
-      name: regName,
-      email: regEmail,
-      phone: regPhone,
-      password: regPassword,
-    });
-    saveAuth(res.data.access, res.data.refresh, res.data.name);
-    setIsLoggedIn(true);
-    alert(`Аккаунт создан! Добро пожаловать, ${regName}`);
-    setIsRegisterModalOpen(false);
-    setRegName('');
-    setRegEmail('');
-    setRegPhone('');
-    setRegPassword('');
-    setRegAgreement(false);
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      alert(err.response?.data?.error || 'Ошибка регистрации');
-    }
-  }
-};
 
   // Метод выполнения поиска при клике на лупу или Enter
   const executeSearch = () => {
@@ -267,10 +208,11 @@ const handleProductClick = (productId: number) => {
 };
 
   const shouldShowSearchOverlay = isSearchFocused;
-  const isAnyOverlayOpen = isCatalogOpen || isLoginModalOpen || isRegisterModalOpen || shouldShowSearchOverlay;
+  const isAnyOverlayOpen =
+    isCatalogOpen || auth.isAnyAuthModalOpen || shouldShowSearchOverlay;
 
   // Если активна страница товара, рендерим ProductPage (управляя переключением обратно через логотип)
-if (activePage === 'product') {
+if (activePage === 'product' && !isSeller) {
     return (
       <ProductPage 
         isLoggedIn={isLoggedIn} 
@@ -288,9 +230,13 @@ if (activePage === 'product') {
         }}
         onCategorySelect={(categoryId) => {
           setSelectedCategory(categoryId);
+          setSpecFilters({});
           setActivePage('main');
         }}
-        onGoToOrders={() => setActivePage('orders')}
+        onGoToOrders={() => {
+          setProfileSection('orders');
+          setActivePage('profile');
+        }}
       />
     );
   }
@@ -331,207 +277,10 @@ if (activePage === 'product') {
         }}
         onClick={() => {
           setIsCatalogOpen(false);
-          setIsLoginModalOpen(false);
-          setIsRegisterModalOpen(false);
+          auth.closeAllModals();
           setIsSearchFocused(false);
         }}
       />
-
-      {/* --- МОДАЛЬНОЕ ОКНО АВТОРИЗАЦИИ --- */}
-      {isLoginModalOpen && (
-        <div style={styles.modalContainer}>
-          <div style={styles.modalHeader}>
-            <h2 style={styles.modalTitle}>Вход в личный кабинет</h2>
-            <button 
-              style={styles.modalCloseButton}
-              onClick={() => setIsLoginModalOpen(false)}
-            >
-              ✕
-            </button>
-          </div>
-          
-          <form onSubmit={handleLoginSubmit} style={styles.modalForm}>
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Email</label>
-              <input 
-                type="text" 
-                required
-                placeholder="Введите email"
-                value={loginValue}
-                onChange={(e) => setLoginValue(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Пароль</label>
-              <input 
-                type="password" 
-                required
-                placeholder="Введите пароль"
-                value={passwordValue}
-                onChange={(e) => setPasswordValue(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.modalCheckboxRow}>
-              <label style={styles.modalCheckboxLabel}>
-                <input 
-                  type="checkbox" 
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  style={styles.checkbox}
-                />
-                <span style={styles.checkboxText}>Запомнить меня</span>
-              </label>
-              <span style={styles.forgotPassword}>Забыли пароль?</span>
-            </div>
-
-            <button 
-              type="submit"
-              style={{
-                ...styles.modalSubmitButton,
-                backgroundColor: isModalSubmitHovered ? COLORS.primaryHover : COLORS.primary,
-              }}
-              onMouseEnter={() => setIsModalSubmitHovered(true)}
-              onMouseLeave={() => setIsModalSubmitHovered(false)}
-            >
-              Войти
-            </button>
-
-            <div style={styles.switchModalRow}>
-              Ещё нет аккаунта?{' '}
-              <span 
-                style={styles.switchModalLink}
-                onClick={() => {
-                  setIsLoginModalOpen(false);
-                  setIsRegisterModalOpen(true);
-                }}
-              >
-                Зарегистрироваться
-              </span>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- МОДАЛЬНОЕ ОКНО РЕГИСТРАЦИИ --- */}
-      {isRegisterModalOpen && (
-        <div style={styles.modalContainer}>
-          <div style={styles.modalHeader}>
-            <h2 style={styles.modalTitle}>Регистрация</h2>
-            <button 
-              style={styles.modalCloseButton}
-              onClick={() => setIsRegisterModalOpen(false)}
-            >
-              ✕
-            </button>
-          </div>
-          
-          <form onSubmit={handleRegisterSubmit} style={styles.modalForm}>
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Имя и Фамилия</label>
-              <input 
-                type="text" 
-                required
-                placeholder="Иван Иванов"
-                value={regName}
-                onChange={(e) => setRegName(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Электронная почта</label>
-              <input 
-                type="text" 
-                required
-                placeholder="example@mail.ru"
-                value={regEmail}
-                onChange={handleEmailChange}
-                style={{
-                  ...styles.modalInput,
-                  borderColor: !isEmailValid && regEmail ? '#FF4D4F' : COLORS.border,
-                  backgroundColor: !isEmailValid && regEmail ? '#FFF2F0' : '#FAFBF9'
-                }}
-              />
-              {!isEmailValid && regEmail && (
-                <span style={styles.errorText}>Некорректный формат (ожидается: имя@домен.код)</span>
-              )}
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Номер телефона</label>
-              <input 
-                type="tel" 
-                required
-                placeholder="+7 (999) 000-00-00"
-                value={regPhone}
-                onChange={handlePhoneChange}
-                maxLength={18}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={styles.inputGroup}>
-              <label style={styles.inputLabel}>Пароль</label>
-              <input 
-                type="password" 
-                required
-                placeholder="Создайте сложный пароль"
-                value={regPassword}
-                onChange={(e) => setRegPassword(e.target.value)}
-                style={styles.modalInput}
-              />
-            </div>
-
-            <div style={{ ...styles.modalCheckboxRow, alignItems: 'flex-start' }}>
-              <label style={styles.modalCheckboxLabel}>
-                <input 
-                  type="checkbox" 
-                  checked={regAgreement}
-                  onChange={(e) => setRegAgreement(e.target.checked)}
-                  style={{ ...styles.checkbox, marginTop: '2px' }}
-                />
-                <span style={{ ...styles.checkboxText, lineHeight: '1.4', fontSize: '12px', color: COLORS.textDark }}>
-                  Я согласен с условиями использования и правилами платформы
-                </span>
-              </label>
-            </div>
-
-            <button 
-              type="submit"
-              disabled={!isFormValid}
-              style={{
-                ...styles.modalSubmitButton,
-                backgroundColor: !isFormValid 
-                  ? '#C2CFC6' 
-                  : (isRegSubmitHovered ? COLORS.primaryHover : COLORS.primary),
-                cursor: isFormValid ? 'pointer' : 'not-allowed',
-                boxShadow: isFormValid ? '0 4px 10px rgba(106, 157, 119, 0.2)' : 'none'
-              }}
-              onMouseEnter={() => setIsRegSubmitHovered(true)}
-              onMouseLeave={() => setIsRegSubmitHovered(false)}
-            >
-              Создать аккаунт
-            </button>
-
-            <div style={styles.switchModalRow}>
-              Уже есть аккаунт?{' '}
-              <span 
-                style={styles.switchModalLink}
-                onClick={() => {
-                  setIsRegisterModalOpen(false);
-                  setIsLoginModalOpen(true);
-                }}
-              >
-                Войти
-              </span>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* --- ВЫДВИЖНОЙ КАТАЛОГ --- */}
       <div 
@@ -558,6 +307,7 @@ if (activePage === 'product') {
                 key={category.id}
                 onClick={() => {
                   setSelectedCategory(category.id);
+                  setSpecFilters({});
                   setIsCatalogOpen(false);
                   setActivePage('main');
                 }}
@@ -587,7 +337,11 @@ if (activePage === 'product') {
           
           <div
             style={{ ...styles.logoContainer, cursor: 'pointer' }}
-            onClick={() => setActivePage('main')}
+            onClick={() => {
+              if (isAdmin) setActivePage('admin');
+              else if (isSeller) setActivePage('seller');
+              else setActivePage('main');
+            }}
           >
             <span style={styles.logoIcon}>🌾</span>
             <div style={styles.logoText}>
@@ -596,6 +350,7 @@ if (activePage === 'product') {
             </div>
           </div>
 
+          {!isSeller && !isAdmin && (
           <div 
             style={{
               ...styles.actionItem,
@@ -615,7 +370,9 @@ if (activePage === 'product') {
             </svg>
             <span style={styles.actionText}>Каталог</span>
           </div>
+          )}
 
+          {!isSeller && !isAdmin && (
           <div style={styles.searchBar}>
             <input 
               ref={searchInputRef}
@@ -649,6 +406,7 @@ if (activePage === 'product') {
               </svg>
             </button>
           </div>
+          )}
 
           <div style={styles.headerActions}>
             
@@ -660,14 +418,19 @@ if (activePage === 'product') {
               <div 
                 onClick={() => {
                   if (isLoggedIn) {
-                    setActivePage('profile');
+                    if (isAdmin) setActivePage('admin');
+                    else if (isSeller) setActivePage('seller');
+                    else {
+                      setProfileSection('profile');
+                      setActivePage('profile');
+                    }
                   } else {
-                    setIsLoginModalOpen(true);
+                    auth.openBuyerLogin();
                   }
                 }}
                 style={{
                   ...styles.actionItem,
-                  color: isLoginHovered || isLoginModalOpen || isRegisterModalOpen ? COLORS.textLight : COLORS.accentLight,
+                  color: isLoginHovered || auth.isAnyAuthModalOpen ? COLORS.textLight : COLORS.accentLight,
                   transform: isLoginHovered ? 'translateY(-1px)' : 'translateY(0)'
                 }} 
               >
@@ -675,42 +438,45 @@ if (activePage === 'product') {
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                   <circle cx="12" cy="7" r="4"></circle>
                 </svg>
-                <span style={styles.actionText}>{isLoggedIn ? 'Профиль' : 'Войти'}</span>
+                <span style={styles.actionText}>{isLoggedIn ? (isAdmin ? 'Админ' : isSeller ? 'Кабинет' : 'Профиль') : 'Войти'}</span>
               </div>
 
-              {isLoginHovered && !isLoginModalOpen && !isRegisterModalOpen && (
-                <div style={styles.loginPopover}>
-                  <div style={styles.popoverArrow}></div>
+              {isLoginHovered && !auth.isAnyAuthModalOpen && (
+                <div style={styles.loginWrapper}>
                   {!isLoggedIn ? (
-                    <>
-                      <button 
+                    <GuestAuthPopover
+                      onLogin={auth.openBuyerLogin}
+                      onRegister={auth.openBuyerRegister}
+                      onSellerLogin={auth.openSellerLogin}
+                      onSellerRegister={auth.openSellerRegister}
+                    />
+                  ) : isSeller || isAdmin ? (
+                    <div style={styles.loginPopover}>
+                      <div style={styles.popoverArrow} />
+                      <button
+                        type="button"
                         style={{
                           ...styles.popoverButton,
-                          backgroundColor: isPopLoginHovered ? COLORS.primaryHover : COLORS.primary,
-                          color: '#FFFFFF'
+                          backgroundColor: isPopLogoutHovered ? '#FF4D4F' : '#FFF2F0',
+                          color: isPopLogoutHovered ? '#FFFFFF' : '#FF4D4F',
+                          border: '1px solid #FFCCC7',
                         }}
-                        onMouseEnter={() => setIsPopLoginHovered(true)}
-                        onMouseLeave={() => setIsPopLoginHovered(false)}
-                        onClick={() => setIsLoginModalOpen(true)}
-                      >
-                        Войти
-                      </button>
-                      <button 
-                        style={{
-                          ...styles.popoverButton,
-                          backgroundColor: isPopRegHovered ? COLORS.accentLight : '#FFFFFF',
-                          color: COLORS.textDark,
-                          border: `1px solid ${COLORS.border}`,
+                        onMouseEnter={() => setIsPopLogoutHovered(true)}
+                        onMouseLeave={() => setIsPopLogoutHovered(false)}
+                        onClick={() => {
+                          clearAuth();
+                          setIsLoggedIn(false);
+                          setUserRole('user');
+                          setIsLoginHovered(false);
+                          setActivePage('main');
                         }}
-                        onMouseEnter={() => setIsPopRegHovered(true)}
-                        onMouseLeave={() => setIsPopRegHovered(false)}
-                        onClick={() => setIsRegisterModalOpen(true)}
                       >
-                        Зарегистрироваться
+                        Выйти
                       </button>
-                    </>
+                    </div>
                   ) : (
-                    <>
+                    <div style={styles.loginPopover}>
+                      <div style={styles.popoverArrow} />
                       <button 
                         style={{
                           ...styles.popoverButton,
@@ -721,27 +487,12 @@ if (activePage === 'product') {
                         onMouseEnter={() => setIsPopLkHovered(true)}
                         onMouseLeave={() => setIsPopLkHovered(false)}
                         onClick={() => {
-                          setActivePage('profile'); // <-- Заменяем alert на переход в профиль
-                          setIsLoginHovered(false); // Закрываем всплывающее окошко ховера
+                          setProfileSection('profile');
+                          setActivePage('profile');
+                          setIsLoginHovered(false);
                         }}
                         >
                         Личный кабинет
-                      </button>
-                      <button 
-                        style={{
-                          ...styles.popoverButton,
-                          backgroundColor: isPopOrdersHovered ? COLORS.accentLight : '#FFFFFF',
-                          color: COLORS.textDark,
-                          border: `1px solid ${COLORS.border}`,
-                        }}
-                        onMouseEnter={() => setIsPopOrdersHovered(true)}
-                        onMouseLeave={() => setIsPopOrdersHovered(false)}
-                        onClick={() => {
-                          setActivePage('orders');
-                          setIsLoginHovered(false);
-                        }}
-                      >
-                        Заказы
                       </button>
                       <button 
                         style={{
@@ -755,17 +506,20 @@ if (activePage === 'product') {
                         onClick={() => {
                           clearAuth();
                           setIsLoggedIn(false);
+                          setUserRole('user');
                           setIsLoginHovered(false);
+                          setActivePage('main');
                         }}
                       >
                         Выйти
                       </button>
-                    </>
+                    </div>
                   )}
                 </div>
               )}
             </div>
 
+            {!isSeller && !isAdmin && (
             <div 
               style={{ 
                 ...styles.actionItem, 
@@ -786,6 +540,7 @@ if (activePage === 'product') {
               </div>
               <span style={styles.actionText}>Корзина</span>
             </div>
+            )}
 
           </div>
 
@@ -794,16 +549,29 @@ if (activePage === 'product') {
 
       <main style={styles.mainContent}>
 
-        {activePage === 'profile' && (
+        {activePage === 'admin' && isLoggedIn && isAdmin && <AdminPage />}
+
+        {activePage === 'seller' && isLoggedIn && isSeller && <SellerPage />}
+
+        {activePage === 'profile' && !isSeller && !isAdmin && (
           <ProfilePage
-            key={isLoggedIn ? 'profile-auth' : 'profile-guest'}
+            key={`${isLoggedIn ? 'auth' : 'guest'}-${profileSection}`}
             isLoggedIn={isLoggedIn}
-            onLoginRequest={() => setIsLoginModalOpen(true)}
-            onGoToOrders={() => setActivePage('orders')}
+            onLoginRequest={auth.openBuyerLogin}
+            initialSection={profileSection}
           />
         )}
 
-        {activePage === 'cart' && (
+        {activePage === 'orders' && !isSeller && !isAdmin && (
+          <ProfilePage
+            key={`${isLoggedIn ? 'auth' : 'guest'}-orders`}
+            isLoggedIn={isLoggedIn}
+            onLoginRequest={auth.openBuyerLogin}
+            initialSection="orders"
+          />
+        )}
+
+        {activePage === 'cart' && !isSeller && !isAdmin && (
           <CartPage
             cartItems={cartItems}
             setCartItems={setCartItems}
@@ -814,20 +582,12 @@ if (activePage === 'product') {
             onProceedToCheckout={(selected) => {
               if (!isLoggedIn) {
                 setPendingCheckoutItems(selected);
-                setIsLoginModalOpen(true);
+                auth.openBuyerLogin();
               } else {
                 setCheckoutItems(selected);
                 setIsCheckoutOpen(true);
               }
             }}
-          />
-        )}
-
-        {activePage === 'orders' && (
-          <OrdersPage
-            key={isLoggedIn ? 'orders-auth' : 'orders-guest'}
-            isLoggedIn={isLoggedIn}
-            onLoginRequest={() => setIsLoginModalOpen(true)}
           />
         )}
 
@@ -840,12 +600,13 @@ if (activePage === 'product') {
               setCartItems((prev) => prev.filter((i) => !orderedIds.has(i.productId)));
               setIsCheckoutOpen(false);
               setCheckoutItems([]);
-              setActivePage('orders');
+              setProfileSection('orders');
+              setActivePage('profile');
             }}
           />
         )}
 
-        {activePage === 'main' && (
+        {activePage === 'main' && !isSeller && !isAdmin && (
         <>
         <section style={styles.banner}>
           <div style={styles.bannerTextContainer}>
@@ -894,12 +655,37 @@ if (activePage === 'product') {
                     Категория: {currentCategoryName}
                     <button 
                       style={styles.resetCategoryButton}
-                      onClick={() => setSelectedCategory('all')}
+                      onClick={() => {
+                        setSelectedCategory('all');
+                        setSpecFilters({});
+                      }}
                     >
                       ✕
                     </button>
                   </span>
                 )}
+              </div>
+            )}
+
+            {selectedCategory !== 'all' && Object.keys(specFilterOptions).length > 0 && (
+              <div style={styles.specFiltersRow}>
+                {Object.entries(specFilterOptions).map(([label, values]) => (
+                  <div key={label} style={styles.specFilterItem}>
+                    <span style={styles.specFilterLabel}>{label}:</span>
+                    <select
+                      value={specFilters[label] || ''}
+                      onChange={(e) =>
+                        setSpecFilters((prev) => ({ ...prev, [label]: e.target.value }))
+                      }
+                      style={styles.sortSelect}
+                    >
+                      <option value="">Все</option>
+                      {values.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1318,6 +1104,23 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'center',
     outline: 'none'
   },
+  popoverDivider: {
+    height: '1px',
+    backgroundColor: COLORS.border,
+    margin: '4px 0',
+    width: '100%',
+  },
+  popoverLinkBtn: {
+    background: 'none',
+    border: 'none',
+    padding: '8px 0',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: COLORS.textMuted,
+    cursor: 'pointer',
+    width: '100%',
+    textAlign: 'center',
+  },
   mainContent: {
     maxWidth: '1500px',            
     margin: '0 auto',
@@ -1363,18 +1166,21 @@ const styles: { [key: string]: React.CSSProperties } = {
   filterToolbar: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    height: '45px',                
+    alignItems: 'flex-start',
+    minHeight: '45px',
     marginBottom: '24px',
     borderBottom: `1px solid ${COLORS.border}`,
     paddingBottom: '14px',
-    boxSizing: 'content-box'
+    boxSizing: 'content-box',
+    gap: '12px',
+    flexWrap: 'wrap',
   },
   filterLeftSection: {
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
-    height: '100%'
+    flexWrap: 'wrap',
+    flex: 1,
   },
   checkboxLabel: {
     display: 'flex',
@@ -1447,6 +1253,25 @@ const styles: { [key: string]: React.CSSProperties } = {
     justifyContent: 'center',
     opacity: 0.6,
     transition: 'opacity 0.2s ease',
+  },
+  specFiltersRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '12px',
+    width: '100%',
+    marginTop: '4px',
+    animation: 'fadeIn 0.15s ease-out',
+  },
+  specFilterItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  specFilterLabel: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: COLORS.textMuted,
+    whiteSpace: 'nowrap',
   },
   resultsCount: {
     fontSize: '14px',
